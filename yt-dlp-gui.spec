@@ -47,6 +47,6 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=None,  # You can add an icon file path here if you have one
+    icon='icon.ico',  # Application icon
 )
 
