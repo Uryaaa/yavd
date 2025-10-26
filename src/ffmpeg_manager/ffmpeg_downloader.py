@@ -1,0 +1,180 @@
+"""FFmpeg downloader for getting FFmpeg from GitHub releases"""
+
+import urllib.request
+import json
+import os
+import threading
+import zipfile
+from typing import Callable, Optional
+from pathlib import Path
+
+
+class FFmpegDownloader:
+    """Downloads FFmpeg executable from GitHub"""
+    
+    # GitHub API URL for FFmpeg releases
+    RELEASES_URL = "https://api.github.com/repos/BtbN/FFmpeg-Builds/releases"
+    
+    def __init__(self):
+        """Initialize FFmpeg downloader"""
+        self.is_downloading = False
+    
+    def download(
+        self,
+        output_path: str,
+        on_progress: Callable[[int, int], None],
+        on_log: Callable[[str], None],
+        on_complete: Callable[[str], None],
+        on_error: Callable[[str], None]
+    ):
+        """
+        Download FFmpeg executable
+        
+        Args:
+            output_path: Path where to save the executable
+            on_progress: Callback for progress (downloaded, total)
+            on_log: Callback for logging messages
+            on_complete: Callback when download completes with file path
+            on_error: Callback when download fails
+        """
+        if self.is_downloading:
+            on_error("A download is already in progress")
+            return
+        
+        # Start download in separate thread
+        thread = threading.Thread(
+            target=self._download_thread,
+            args=(output_path, on_progress, on_log, on_complete, on_error),
+            daemon=True
+        )
+        thread.start()
+    
+    def _download_thread(
+        self,
+        output_path: str,
+        on_progress: Callable[[int, int], None],
+        on_log: Callable[[str], None],
+        on_complete: Callable[[str], None],
+        on_error: Callable[[str], None]
+    ):
+        """Execute download in background thread"""
+        self.is_downloading = True
+        
+        try:
+            # Get download URL
+            on_log("Fetching latest FFmpeg release information...")
+            download_url = self._get_download_url(on_log)
+            
+            if not download_url:
+                on_error("Failed to get download URL for FFmpeg")
+                return
+            
+            on_log(f"Download URL: {download_url}")
+            on_log(f"Downloading to: {output_path}")
+            
+            # Ensure output directory exists
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+            
+            # Download with progress
+            def reporthook(block_num, block_size, total_size):
+                downloaded = block_num * block_size
+                if total_size > 0:
+                    on_progress(downloaded, total_size)
+            
+            # Download the file
+            temp_zip = output_path + ".zip"
+            urllib.request.urlretrieve(download_url, temp_zip, reporthook)
+            
+            # Extract ffmpeg.exe from zip
+            on_log("Extracting FFmpeg executable...")
+            self._extract_ffmpeg(temp_zip, output_path, on_log)
+            
+            # Clean up zip file
+            if os.path.exists(temp_zip):
+                os.remove(temp_zip)
+            
+            # Verify file was extracted
+            if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+                on_log(f"✓ Successfully downloaded FFmpeg")
+                on_log(f"  File size: {os.path.getsize(output_path):,} bytes")
+                on_complete(output_path)
+            else:
+                on_error("Download completed but file is invalid")
+        
+        except Exception as e:
+            on_log(f"✗ Error: {str(e)}")
+            on_error(str(e))
+        
+        finally:
+            self.is_downloading = False
+    
+    def _get_download_url(self, on_log: Callable[[str], None]) -> Optional[str]:
+        """
+        Get download URL for latest FFmpeg release
+
+        Args:
+            on_log: Logging callback
+
+        Returns:
+            Download URL or None if failed
+        """
+        try:
+            # Create request with User-Agent header
+            req = urllib.request.Request(
+                self.RELEASES_URL,
+                headers={'User-Agent': 'yt-dlp-gui'}
+            )
+
+            with urllib.request.urlopen(req, timeout=10) as response:
+                data = json.loads(response.read().decode('utf-8'))
+
+            # Find the latest release with Windows build
+            for release in data:
+                if release.get('prerelease'):
+                    continue
+
+                assets = release.get('assets', [])
+                for asset in assets:
+                    name = asset.get('name', '').lower()
+                    # Look for Windows 64-bit GPL build (most common, includes ffmpeg.exe)
+                    # Prefer non-shared versions as they're more portable
+                    if 'win64' in name and 'gpl' in name and not 'shared' in name and name.endswith('.zip'):
+                        download_url = asset.get('browser_download_url')
+                        version = release.get('tag_name', 'unknown')
+                        on_log(f"Found version: {version}")
+                        return download_url
+
+            on_log("⚠ Could not find FFmpeg Windows build in release assets")
+            return None
+
+        except Exception as e:
+            on_log(f"✗ Error fetching release info: {str(e)}")
+            return None
+    
+    def _extract_ffmpeg(self, zip_path: str, output_path: str, on_log: Callable[[str], None]):
+        """
+        Extract ffmpeg.exe from the downloaded zip file
+        
+        Args:
+            zip_path: Path to the zip file
+            output_path: Path where to save ffmpeg.exe
+            on_log: Logging callback
+        """
+        try:
+            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                # Find ffmpeg.exe in the zip
+                for file_info in zip_ref.filelist:
+                    if file_info.filename.endswith('ffmpeg.exe'):
+                        # Extract to output path
+                        with zip_ref.open(file_info) as source:
+                            with open(output_path, 'wb') as target:
+                                target.write(source.read())
+                        on_log(f"Extracted: {file_info.filename}")
+                        return
+            
+            raise Exception("ffmpeg.exe not found in zip file")
+        
+        except Exception as e:
+            on_log(f"✗ Error extracting FFmpeg: {str(e)}")
+            raise
+

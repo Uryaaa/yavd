@@ -17,42 +17,8 @@ from ..config import ConfigManager
 from ..downloader import Downloader
 from ..metadata import MetadataFetcher
 from ..ytdlp_manager import YtdlpDownloader
+from ..ffmpeg_manager import FFmpegDownloader
 from ..templates import TemplateManager
-
-
-class ToolTip:
-    """Create a tooltip for a given widget"""
-
-    def __init__(self, widget, text):
-        self.widget = widget
-        self.text = text
-        self.tooltip_window = None
-        self.widget.bind("<Enter>", self.show_tooltip)
-        self.widget.bind("<Leave>", self.hide_tooltip)
-
-    def show_tooltip(self, event=None):
-        """Display the tooltip"""
-        if self.tooltip_window or not self.text:
-            return
-
-        x, y, _, _ = self.widget.bbox("insert") if hasattr(self.widget, 'bbox') else (0, 0, 0, 0)
-        x += self.widget.winfo_rootx() + 25
-        y += self.widget.winfo_rooty() + 25
-
-        self.tooltip_window = tw = tk.Toplevel(self.widget)
-        tw.wm_overrideredirect(True)
-        tw.wm_geometry(f"+{x}+{y}")
-
-        label = tk.Label(tw, text=self.text, justify=tk.LEFT,
-                        background="#ffffe0", relief=tk.SOLID, borderwidth=1,
-                        font=("Arial", 8, "normal"), padx=5, pady=3)
-        label.pack()
-
-    def hide_tooltip(self, event=None):
-        """Hide the tooltip"""
-        if self.tooltip_window:
-            self.tooltip_window.destroy()
-            self.tooltip_window = None
 
 
 class MainWindow:
@@ -93,6 +59,9 @@ class MainWindow:
 
         # Initialize yt-dlp manager
         self.ytdlp_downloader = YtdlpDownloader()
+
+        # Initialize FFmpeg manager
+        self.ffmpeg_downloader = FFmpegDownloader()
 
         # Initialize template manager
         self.template_manager = TemplateManager()
@@ -201,6 +170,10 @@ class MainWindow:
         self.ytdlp_tab = ttk.Frame(self.notebook, padding="8")
         self.notebook.add(self.ytdlp_tab, text="⚙️ Get yt-dlp")
 
+        # Get FFmpeg tab
+        self.ffmpeg_tab = ttk.Frame(self.notebook, padding="8")
+        self.notebook.add(self.ffmpeg_tab, text="🎬 Get FFmpeg")
+
         # Templates tab
         self.templates_tab = ttk.Frame(self.notebook, padding="5")
         self.notebook.add(self.templates_tab, text="📋 Templates")
@@ -212,6 +185,7 @@ class MainWindow:
         # Configure tab weights
         self.download_tab.columnconfigure(0, weight=1)
         self.ytdlp_tab.columnconfigure(0, weight=1)
+        self.ffmpeg_tab.columnconfigure(0, weight=1)
         self.templates_tab.columnconfigure(0, weight=1)
         self.log_tab.columnconfigure(0, weight=1)
         self.log_tab.rowconfigure(0, weight=1)
@@ -224,6 +198,9 @@ class MainWindow:
 
         # Populate Get yt-dlp Tab
         self._create_ytdlp_tab_content()
+
+        # Populate Get FFmpeg Tab
+        self._create_ffmpeg_tab_content()
 
         # Populate Templates Tab
         self._create_templates_tab_content()
@@ -322,7 +299,7 @@ class MainWindow:
         self.ytdlp_progress_frame.grid_remove()
 
         # Download button
-        self.ytdlp_download_btn = ttk.Button(self.ytdlp_tab, text="⬇️ Download yt-dlp",
+        self.ytdlp_download_btn = ttk.Button(self.ytdlp_tab, text="📥 Download yt-dlp",
                                             command=self._download_ytdlp,
                                             style='Accent.TButton')
         self.ytdlp_download_btn.grid(row=5, column=0, pady=(0, 10), sticky=(tk.W, tk.E))
@@ -332,6 +309,58 @@ class MainWindow:
                     "You can also manually browse for an existing yt-dlp.exe file.")
         ttk.Label(self.ytdlp_tab, text=info_text, font=('Arial', 8),
                  foreground='gray').grid(row=6, column=0, sticky=tk.W)
+
+    def _create_ffmpeg_tab_content(self):
+        """Create content for Get FFmpeg tab"""
+        # Title
+        ttk.Label(self.ffmpeg_tab, text="Download FFmpeg Executable",
+                 font=('Arial', 11, 'bold')).grid(row=0, column=0, sticky=tk.W, pady=(0, 10))
+
+        # Description
+        desc_text = "Download the latest FFmpeg executable directly from GitHub.\nFFmpeg is required for advanced video processing."
+        ttk.Label(self.ffmpeg_tab, text=desc_text, font=('Arial', 9)).grid(
+            row=1, column=0, sticky=tk.W, pady=(0, 15))
+
+        # Output location
+        location_frame = ttk.LabelFrame(self.ffmpeg_tab, text="Save Location", padding="10")
+        location_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
+        location_frame.columnconfigure(0, weight=1)
+
+        self.ffmpeg_save_entry = ttk.Entry(location_frame, width=50)
+        self.ffmpeg_save_entry.grid(row=0, column=0, sticky=(tk.W, tk.E), padx=(0, 5))
+        default_path = str(Path.home() / "Downloads" / "ffmpeg.exe")
+        self.ffmpeg_save_entry.insert(0, default_path)
+
+        ttk.Button(location_frame, text="📁 Browse...",
+                  command=self._browse_ffmpeg_save_location).grid(row=0, column=1)
+
+        # Progress bar
+        self.ffmpeg_progress_frame = ttk.Frame(self.ffmpeg_tab)
+        self.ffmpeg_progress_frame.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
+        self.ffmpeg_progress_frame.columnconfigure(0, weight=1)
+
+        self.ffmpeg_progress_label = ttk.Label(self.ffmpeg_progress_frame, text="",
+                                              font=('Arial', 9))
+        self.ffmpeg_progress_label.grid(row=0, column=0, sticky=tk.W, pady=(0, 5))
+
+        self.ffmpeg_progress_bar = ttk.Progressbar(self.ffmpeg_progress_frame,
+                                                   mode='determinate', length=400)
+        self.ffmpeg_progress_bar.grid(row=1, column=0, sticky=(tk.W, tk.E))
+
+        # Initially hide progress
+        self.ffmpeg_progress_frame.grid_remove()
+
+        # Download button
+        self.ffmpeg_download_btn = ttk.Button(self.ffmpeg_tab, text="📥 Download FFmpeg",
+                                             command=self._download_ffmpeg,
+                                             style='Accent.TButton')
+        self.ffmpeg_download_btn.grid(row=4, column=0, pady=(0, 10), sticky=(tk.W, tk.E))
+
+        # Info text
+        info_text = ("After downloading, you can use FFmpeg for advanced video processing.\n"
+                    "If you already have FFmpeg, it will be automatically detected.")
+        ttk.Label(self.ffmpeg_tab, text=info_text, font=('Arial', 8),
+                 foreground='gray').grid(row=5, column=0, sticky=tk.W)
 
     def _create_templates_tab_content(self):
         """Create content for Templates tab"""
@@ -523,11 +552,9 @@ class MainWindow:
 
         self.yt_dlp_entry = ttk.Entry(path_frame, width=50)
         self.yt_dlp_entry.grid(row=0, column=0, sticky=(tk.W, tk.E), padx=(0, 3))
-        ToolTip(self.yt_dlp_entry, "Path to yt-dlp.exe executable\nDownload from the 'Get yt-dlp' tab if you don't have it")
 
         self.yt_dlp_browse_btn = ttk.Button(path_frame, text="📁 Browse...", command=self.browse_yt_dlp)
         self.yt_dlp_browse_btn.grid(row=0, column=1, sticky=tk.W)
-        ToolTip(self.yt_dlp_browse_btn, "Browse for yt-dlp.exe on your computer")
 
     def _create_url_section(self, parent):
         """Create video URL input section"""
@@ -540,15 +567,12 @@ class MainWindow:
 
         self.url_entry = ttk.Entry(url_frame, width=50, font=('Arial', 9))
         self.url_entry.grid(row=0, column=0, sticky=(tk.W, tk.E), padx=(0, 3))
-        ToolTip(self.url_entry, "Enter the URL of the video you want to download\nSupports YouTube, Vimeo, and many other sites")
 
         paste_btn = ttk.Button(url_frame, text="📋 Paste", command=self.paste_url)
         paste_btn.grid(row=0, column=1, padx=(0, 3))
-        ToolTip(paste_btn, "Paste URL from clipboard")
 
         fetch_btn = ttk.Button(url_frame, text="ℹ️ Fetch Info", command=self.fetch_video_info)
         fetch_btn.grid(row=0, column=2)
-        ToolTip(fetch_btn, "Fetch video information and thumbnail\n(Optional - helps preview before downloading)")
 
     def _create_metadata_section(self, parent):
         """Create video metadata display section"""
@@ -654,11 +678,9 @@ class MainWindow:
         self.output_entry = ttk.Entry(output_frame, width=50, font=('Arial', 9))
         self.output_entry.grid(row=0, column=0, sticky=(tk.W, tk.E), padx=(0, 3))
         self.output_entry.insert(0, str(Path.home() / "Downloads"))
-        ToolTip(self.output_entry, "Directory where downloaded files will be saved")
 
         browse_btn = ttk.Button(output_frame, text="📁 Browse...", command=self.browse_output)
         browse_btn.grid(row=0, column=1)
-        ToolTip(browse_btn, "Select output directory")
 
     def _create_format_section(self, parent):
         """Create format selection section"""
@@ -672,12 +694,10 @@ class MainWindow:
         mp4_radio = ttk.Radiobutton(format_frame, text="🎥 MP4 (Video)", variable=self.format_var,
                        value="mp4")
         mp4_radio.grid(row=0, column=0, padx=(0, 15))
-        ToolTip(mp4_radio, "Download as video file (MP4 format)")
 
         mp3_radio = ttk.Radiobutton(format_frame, text="🎵 MP3 (Audio)", variable=self.format_var,
                        value="mp3")
         mp3_radio.grid(row=0, column=1)
-        ToolTip(mp3_radio, "Extract and download audio only (MP3 format)")
 
     def _create_quality_section(self, parent):
         """Create quality selection section"""
@@ -703,7 +723,6 @@ class MainWindow:
         self.quality_combo['values'] = [opt[0] for opt in quality_options]
         self.quality_combo.current(0)
         self.quality_combo.grid(row=0, column=0, sticky=(tk.W, tk.E))
-        ToolTip(self.quality_combo, "Select video quality\nHigher quality = larger file size")
 
         # Store mapping of display names to values
         self.quality_mapping = {opt[0]: opt[1] for opt in quality_options}
@@ -730,7 +749,6 @@ class MainWindow:
         self.download_btn = ttk.Button(parent, text="📥 Download",
                                        command=self.start_download, style='Accent.TButton')
         self.download_btn.grid(row=11, column=0, pady=(0, 5), sticky=(tk.W, tk.E))
-        ToolTip(self.download_btn, "Start downloading the video with selected settings")
     
     def _create_output_log(self, parent):
         """Create output log section"""
@@ -1018,7 +1036,8 @@ class MainWindow:
                     stderr=subprocess.STDOUT,
                     encoding='utf-8',
                     errors='replace',
-                    bufsize=1
+                    bufsize=1,
+                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
                 )
 
                 # Read output line by line
@@ -1246,6 +1265,72 @@ class MainWindow:
         # Start download
         self.ytdlp_downloader.download(
             version_type=version_type,
+            output_path=save_path,
+            on_progress=on_progress,
+            on_log=self.log_message,
+            on_complete=on_complete,
+            on_error=on_error
+        )
+
+    # FFmpeg Download Tab Methods
+
+    def _browse_ffmpeg_save_location(self):
+        """Browse for FFmpeg save location"""
+        filename = filedialog.asksaveasfilename(
+            title="Save FFmpeg executable as",
+            defaultextension=".exe",
+            filetypes=[("Executable files", "*.exe"), ("All files", "*.*")],
+            initialfile="ffmpeg.exe"
+        )
+        if filename:
+            self.ffmpeg_save_entry.delete(0, tk.END)
+            self.ffmpeg_save_entry.insert(0, filename)
+
+    def _download_ffmpeg(self):
+        """Download FFmpeg executable"""
+        save_path = self.ffmpeg_save_entry.get().strip()
+
+        if not save_path:
+            messagebox.showerror("Error", "Please specify a save location")
+            return
+
+        # Disable button during download
+        self.ffmpeg_download_btn.configure(state='disabled')
+        self.ffmpeg_progress_frame.grid()
+        self.ffmpeg_progress_bar['value'] = 0
+        self.ffmpeg_progress_label.config(text="Preparing to download FFmpeg...")
+
+        # Switch to log tab
+        self.notebook.select(self.log_tab)
+
+        # Clear log
+        self.output_text.configure(state='normal')
+        self.output_text.delete(1.0, tk.END)
+        self.output_text.configure(state='disabled')
+
+        def on_progress(downloaded, total):
+            if total > 0:
+                percent = (downloaded / total) * 100
+                self.ffmpeg_progress_bar['value'] = percent
+                self.ffmpeg_progress_label.config(
+                    text=f"Downloading: {downloaded:,} / {total:,} bytes ({percent:.1f}%)"
+                )
+
+        def on_complete(file_path):
+            self.ffmpeg_download_btn.configure(state='normal')
+            self.ffmpeg_progress_label.config(text="Download completed!")
+            self.status_var.set("FFmpeg downloaded successfully")
+
+            messagebox.showinfo("Success", f"FFmpeg downloaded successfully!\n\nSaved to:\n{file_path}")
+
+        def on_error(error_msg):
+            self.ffmpeg_download_btn.configure(state='normal')
+            self.ffmpeg_progress_frame.grid_remove()
+            self.status_var.set("FFmpeg download failed")
+            messagebox.showerror("Download Error", f"Failed to download FFmpeg:\n{error_msg}")
+
+        # Start download
+        self.ffmpeg_downloader.download(
             output_path=save_path,
             on_progress=on_progress,
             on_log=self.log_message,

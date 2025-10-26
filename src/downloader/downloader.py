@@ -97,7 +97,8 @@ class Downloader:
                 stderr=subprocess.STDOUT,
                 encoding='utf-8',
                 errors='replace',
-                bufsize=1
+                bufsize=1,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
             )
             
             # Read output line by line
@@ -290,7 +291,8 @@ class Downloader:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 encoding='utf-8',
-                errors='replace'
+                errors='replace',
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
             )
 
             # Read stderr (FFmpeg outputs to stderr)

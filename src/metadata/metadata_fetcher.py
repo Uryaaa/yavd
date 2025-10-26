@@ -3,6 +3,7 @@
 import subprocess
 import json
 import threading
+import os
 from typing import Callable, Optional, Dict, Any
 
 
@@ -75,7 +76,8 @@ class MetadataFetcher:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 encoding='utf-8',
-                errors='replace'
+                errors='replace',
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
             )
             
             stdout, stderr = process.communicate(timeout=30)
