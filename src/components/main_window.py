@@ -739,7 +739,7 @@ class MainWindow:
         self.download_progress_label.grid(row=0, column=0, sticky=tk.W, pady=(0, 5))
 
         self.download_progress_bar = ttk.Progressbar(self.download_progress_frame,
-                                                     mode='indeterminate', length=400)
+                                                     mode='determinate', length=400)
         self.download_progress_bar.grid(row=1, column=0, sticky=(tk.W, tk.E))
 
         # Initially hide progress
@@ -939,7 +939,7 @@ class MainWindow:
         # Show and start progress bar
         self.download_progress_frame.grid()
         self.download_progress_label.config(text="Preparing download...")
-        self.download_progress_bar.start(10)  # Indeterminate mode animation
+        self.download_progress_bar['value'] = 0  # Reset progress bar
 
         # Switch to log tab
         self.notebook.select(self.log_tab)
@@ -984,7 +984,9 @@ class MainWindow:
             trim_end=trim_end,
             on_log=self.log_message,
             on_complete=self._on_download_complete,
-            on_error=self._on_download_error
+            on_error=self._on_download_error,
+            on_download_started=self._on_download_started,
+            on_progress=self._on_download_progress
         )
 
     def _start_template_download(self):
@@ -999,7 +1001,7 @@ class MainWindow:
         # Show and start progress bar
         self.download_progress_frame.grid()
         self.download_progress_label.config(text="Downloading with custom template...")
-        self.download_progress_bar.start(10)
+        self.download_progress_bar['value'] = 0
 
         # Switch to log tab
         self.notebook.select(self.log_tab)
@@ -1044,6 +1046,20 @@ class MainWindow:
                 for line in process.stdout:
                     self.log_message(line.rstrip())
 
+                    # Parse progress from yt-dlp output
+                    if '[download]' in line:
+                        progress_info = self._parse_template_progress_line(line)
+                        if progress_info:
+                            percent = progress_info.get('percent', 0)
+                            speed = progress_info.get('speed', 'N/A')
+                            eta = progress_info.get('eta', 'N/A')
+                            downloaded = progress_info.get('downloaded', 'N/A')
+                            total = progress_info.get('total', 'N/A')
+
+                            self.download_progress_bar['value'] = percent
+                            progress_text = f"Downloading... {percent:.1f}% | {downloaded} / {total} | {speed} | ETA {eta}"
+                            self.download_progress_label.config(text=progress_text)
+
                 process.wait()
 
                 if process.returncode == 0:
@@ -1067,13 +1083,88 @@ class MainWindow:
         thread = threading.Thread(target=download_thread, daemon=True)
         thread.start()
     
+    def _on_download_started(self):
+        """Callback when actual download starts (after preparation)"""
+        self.download_progress_label.config(text="Downloading...")
+
+    def _on_download_progress(self, progress_info):
+        """Callback for download progress updates
+
+        Args:
+            progress_info: Dictionary with keys: 'percent', 'speed', 'eta', 'downloaded', 'total'
+        """
+        percent = progress_info.get('percent', 0)
+        speed = progress_info.get('speed', 'N/A')
+        eta = progress_info.get('eta', 'N/A')
+        downloaded = progress_info.get('downloaded', 'N/A')
+        total = progress_info.get('total', 'N/A')
+
+        self.download_progress_bar['value'] = percent
+
+        # Format: "Downloading... 45.3% | 123.45MiB / 456.78MiB | 1.23MiB/s | ETA 00:30"
+        progress_text = f"Downloading... {percent:.1f}% | {downloaded} / {total} | {speed} | ETA {eta}"
+        self.download_progress_label.config(text=progress_text)
+
+    def _parse_template_progress_line(self, line: str):
+        """Parse progress information from yt-dlp output line for template downloads
+
+        Format: [download]  50.5% of ~123.45MiB at 1.23MiB/s ETA 00:30
+
+        Args:
+            line: Output line from yt-dlp
+
+        Returns:
+            Dictionary with keys: 'percent', 'speed', 'eta', 'downloaded', 'total'
+            or None if parsing fails
+        """
+        import re
+
+        try:
+            progress_info = {}
+
+            # Parse percentage
+            percent_match = re.search(r'(\d+\.?\d*)\%', line)
+            if percent_match:
+                progress_info['percent'] = float(percent_match.group(1))
+
+            # Parse downloaded and total size (e.g., "50.5% of ~123.45MiB")
+            size_match = re.search(r'of\s+~?(\d+\.?\d*[KMG]iB)', line)
+            if size_match:
+                progress_info['total'] = size_match.group(1)
+
+            # Parse download speed (e.g., "at 1.23MiB/s")
+            speed_match = re.search(r'at\s+(\d+\.?\d*[KMG]iB/s)', line)
+            if speed_match:
+                progress_info['speed'] = speed_match.group(1)
+
+            # Parse ETA (e.g., "ETA 00:30")
+            eta_match = re.search(r'ETA\s+(\d+:\d+)', line)
+            if eta_match:
+                progress_info['eta'] = eta_match.group(1)
+
+            # Calculate downloaded size from percentage and total
+            if 'percent' in progress_info and 'total' in progress_info:
+                total_str = progress_info['total']
+                total_match = re.search(r'(\d+\.?\d*)([KMG]iB)', total_str)
+                if total_match:
+                    total_value = float(total_match.group(1))
+                    unit = total_match.group(2)
+                    percent = progress_info['percent']
+                    downloaded_value = (total_value * percent) / 100
+                    progress_info['downloaded'] = f"{downloaded_value:.2f}{unit}"
+
+            return progress_info if progress_info else None
+
+        except Exception:
+            return None
+
     def _on_download_complete(self):
         """Callback when download completes successfully"""
         self.status_var.set("Download completed!")
         self.download_btn.configure(state='normal')
 
-        # Stop and hide progress bar
-        self.download_progress_bar.stop()
+        # Set progress bar to 100% and hide
+        self.download_progress_bar['value'] = 100
         self.download_progress_label.config(text="✓ Download completed!")
         # Keep progress visible for a moment, then hide
         self.root.after(2000, self.download_progress_frame.grid_remove)
@@ -1090,12 +1181,48 @@ class MainWindow:
         self.status_var.set("Download failed!")
         self.download_btn.configure(state='normal')
 
-        # Stop and hide progress bar
-        self.download_progress_bar.stop()
+        # Hide progress bar
         self.download_progress_label.config(text="✗ Download failed!")
         self.root.after(2000, self.download_progress_frame.grid_remove)
 
         messagebox.showerror("Error", f"Download failed: {error_msg}")
+
+    def _format_speed(self, speed_bytes_per_sec):
+        """Format download speed in human-readable format
+
+        Args:
+            speed_bytes_per_sec: Speed in bytes per second
+
+        Returns:
+            Formatted speed string (e.g., "1.23MiB/s")
+        """
+        if speed_bytes_per_sec < 1024:
+            return f"{speed_bytes_per_sec:.2f}B/s"
+        elif speed_bytes_per_sec < 1024 * 1024:
+            return f"{speed_bytes_per_sec / 1024:.2f}KiB/s"
+        else:
+            return f"{speed_bytes_per_sec / (1024 * 1024):.2f}MiB/s"
+
+    def _format_time(self, seconds):
+        """Format time in human-readable format
+
+        Args:
+            seconds: Time in seconds
+
+        Returns:
+            Formatted time string (e.g., "00:30" or "01:23:45")
+        """
+        if seconds < 0:
+            return "N/A"
+
+        hours = int(seconds // 3600)
+        minutes = int((seconds % 3600) // 60)
+        secs = int(seconds % 60)
+
+        if hours > 0:
+            return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+        else:
+            return f"{minutes:02d}:{secs:02d}"
 
     def _validate_time_format(self, time_str):
         """
@@ -1236,23 +1363,41 @@ class MainWindow:
         self.output_text.delete(1.0, tk.END)
         self.output_text.configure(state='disabled')
 
-        def on_progress(downloaded, total):
+        def on_progress(progress_info):
+            downloaded = progress_info.get('downloaded', 0)
+            total = progress_info.get('total', 0)
+            speed = progress_info.get('speed', 0)
+            eta_seconds = progress_info.get('eta_seconds', 0)
+
             if total > 0:
                 percent = (downloaded / total) * 100
                 self.ytdlp_progress_bar['value'] = percent
+
+                # Format speed and ETA
+                speed_str = self._format_speed(speed)
+                eta_str = self._format_time(eta_seconds)
+
+                # Format sizes
+                downloaded_mb = downloaded / (1024 * 1024)
+                total_mb = total / (1024 * 1024)
+
                 self.ytdlp_progress_label.config(
-                    text=f"Downloading: {downloaded:,} / {total:,} bytes ({percent:.1f}%)"
+                    text=f"Downloading: {downloaded_mb:.2f}MiB / {total_mb:.2f}MiB ({percent:.1f}%) | {speed_str} | ETA {eta_str}"
                 )
 
         def on_complete(file_path):
             self.ytdlp_download_btn.configure(state='normal')
-            self.ytdlp_progress_label.config(text="Download completed!")
+            self.ytdlp_progress_bar['value'] = 100
+            self.ytdlp_progress_label.config(text="✓ Download completed!")
             self.status_var.set("yt-dlp downloaded successfully")
 
             # Set the path in the main yt-dlp entry
             self.yt_dlp_entry.delete(0, tk.END)
             self.yt_dlp_entry.insert(0, file_path)
             self.config.set('yt_dlp_path', file_path)
+
+            # Hide progress bar after 2 seconds
+            self.root.after(2000, self.ytdlp_progress_frame.grid_remove)
 
             messagebox.showinfo("Success", f"yt-dlp downloaded successfully!\n\nSaved to:\n{file_path}")
 
@@ -1308,18 +1453,36 @@ class MainWindow:
         self.output_text.delete(1.0, tk.END)
         self.output_text.configure(state='disabled')
 
-        def on_progress(downloaded, total):
+        def on_progress(progress_info):
+            downloaded = progress_info.get('downloaded', 0)
+            total = progress_info.get('total', 0)
+            speed = progress_info.get('speed', 0)
+            eta_seconds = progress_info.get('eta_seconds', 0)
+
             if total > 0:
                 percent = (downloaded / total) * 100
                 self.ffmpeg_progress_bar['value'] = percent
+
+                # Format speed and ETA
+                speed_str = self._format_speed(speed)
+                eta_str = self._format_time(eta_seconds)
+
+                # Format sizes
+                downloaded_mb = downloaded / (1024 * 1024)
+                total_mb = total / (1024 * 1024)
+
                 self.ffmpeg_progress_label.config(
-                    text=f"Downloading: {downloaded:,} / {total:,} bytes ({percent:.1f}%)"
+                    text=f"Downloading: {downloaded_mb:.2f}MiB / {total_mb:.2f}MiB ({percent:.1f}%) | {speed_str} | ETA {eta_str}"
                 )
 
         def on_complete(file_path):
             self.ffmpeg_download_btn.configure(state='normal')
-            self.ffmpeg_progress_label.config(text="Download completed!")
+            self.ffmpeg_progress_bar['value'] = 100
+            self.ffmpeg_progress_label.config(text="✓ Download completed!")
             self.status_var.set("FFmpeg downloaded successfully")
+
+            # Hide progress bar after 2 seconds
+            self.root.after(2000, self.ffmpeg_progress_frame.grid_remove)
 
             messagebox.showinfo("Success", f"FFmpeg downloaded successfully!\n\nSaved to:\n{file_path}")
 
