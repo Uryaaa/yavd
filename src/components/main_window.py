@@ -22,6 +22,7 @@ from ..ytdlp_manager import YtdlpDownloader
 from ..ffmpeg_manager import FFmpegDownloader
 from ..templates import TemplateManager
 from .context_menu import ContextMenu
+from .playlist_selector import PlaylistSelector
 
 
 class MainWindow:
@@ -916,6 +917,11 @@ class MainWindow:
         """Handle successful metadata fetch"""
         self.current_metadata = metadata
 
+        # Check if this is a playlist
+        if metadata.get('is_playlist', False):
+            self._handle_playlist_detected(metadata)
+            return
+
         # Update metadata display
         self.metadata_title.config(text=metadata.get('title', 'Unknown'))
         self.metadata_duration.config(
@@ -1011,6 +1017,58 @@ class MainWindow:
         # Keep download button disabled on error
         self.metadata_fetched = False
         self.download_btn.configure(state='disabled')
+
+    def _handle_playlist_detected(self, playlist_info):
+        """Handle detected playlist"""
+        playlist_title = playlist_info.get('playlist_title', 'Playlist')
+        n_entries = playlist_info.get('n_entries', 0)
+
+        self.status_var.set(f"Playlist detected: {playlist_title} ({n_entries} videos)")
+        self.log_message(f"✓ Playlist detected: {playlist_title}")
+        self.log_message(f"  Total videos: {n_entries}")
+
+        # Show playlist selector dialog
+        def on_videos_selected(selected_videos):
+            """Handle video selection from playlist"""
+            if not selected_videos:
+                self.log_message("✗ No videos selected")
+                return
+
+            self.log_message(f"✓ Selected {len(selected_videos)} video(s) from playlist")
+
+            # Store selected videos for download
+            self.current_metadata['selected_videos'] = selected_videos
+            self.current_metadata['is_playlist'] = True
+
+            # Show metadata for first selected video
+            first_video = selected_videos[0]
+            self.metadata_title.config(text=first_video.get('title', 'Unknown'))
+            self.metadata_duration.config(
+                text=MetadataFetcher.format_duration(first_video.get('duration', 0))
+            )
+            self.metadata_uploader.config(text=f"Playlist ({len(selected_videos)} videos)")
+            self.metadata_views.config(text="")
+
+            # Load thumbnail
+            thumbnail_url = first_video.get('thumbnail', '')
+            if thumbnail_url:
+                self._load_thumbnail(thumbnail_url)
+
+            # Show metadata frame
+            self.metadata_frame.grid()
+
+            # Show format and quality sections
+            self.format_label_frame.grid()
+            self.quality_label_frame.grid()
+
+            # Enable download button
+            self.metadata_fetched = True
+            self.download_btn.configure(state='normal')
+
+            self.status_var.set("Ready to download playlist videos")
+
+        # Create and show playlist selector
+        PlaylistSelector(self.root, playlist_info, on_videos_selected)
 
     def _update_format_options(self, formats: list):
         """
@@ -1262,6 +1320,21 @@ class MainWindow:
         # Get mode (video/audio/auto)
         mode = self.mode_var.get()
 
+        # Check if this is a playlist download
+        if self.current_metadata.get('is_playlist', False):
+            selected_videos = self.current_metadata.get('selected_videos', [])
+            self._start_playlist_download(
+                yt_dlp_path=yt_dlp_path,
+                selected_videos=selected_videos,
+                output_dir=output_dir,
+                format_type=format_type,
+                quality=quality,
+                trim_start=trim_start,
+                trim_end=trim_end,
+                mode=mode
+            )
+            return
+
         # Start download
         self.downloader.download(
             yt_dlp_path=yt_dlp_path,
@@ -1278,6 +1351,93 @@ class MainWindow:
             on_progress=self._on_download_progress,
             mode=mode
         )
+
+    def _start_playlist_download(self, yt_dlp_path, selected_videos, output_dir, format_type, quality, trim_start, trim_end, mode):
+        """Start downloading multiple videos from a playlist"""
+        import threading
+
+        def download_playlist_thread():
+            """Download videos in a separate thread"""
+            import time
+            total_videos = len(selected_videos)
+            download_event = threading.Event()
+            download_error = [False]  # Use list to allow modification in nested function
+
+            def on_video_complete():
+                """Called when a single video download completes"""
+                download_event.set()
+
+            def on_video_error(error_msg):
+                """Called when a video download fails"""
+                download_error[0] = True
+                download_event.set()
+
+            for idx, video in enumerate(selected_videos, 1):
+                video_url = video.get('url', '')
+                video_title = video.get('title', 'Unknown')
+
+                self.log_message(f"\n{'='*70}")
+                self.log_message(f"Downloading video {idx}/{total_videos}: {video_title}")
+                self.log_message(f"{'='*70}")
+
+                # Update progress label
+                self.download_progress_label.config(
+                    text=f"Downloading {idx}/{total_videos}: {video_title[:50]}..."
+                )
+                self.download_progress_bar['value'] = ((idx - 1) / total_videos) * 100
+
+                # Reset event for this download
+                download_event.clear()
+                download_error[0] = False
+
+                # Download this video
+                self.downloader.download(
+                    yt_dlp_path=yt_dlp_path,
+                    url=video_url,
+                    output_dir=output_dir,
+                    format_type=format_type,
+                    quality=quality,
+                    trim_start=trim_start,
+                    trim_end=trim_end,
+                    on_log=self.log_message,
+                    on_complete=on_video_complete,
+                    on_error=on_video_error,
+                    on_download_started=self._on_download_started,
+                    on_progress=self._on_download_progress,
+                    mode=mode,
+                    is_playlist_item=True
+                )
+
+                # Wait for this video to complete
+                download_event.wait()
+
+                # If error occurred, stop downloading
+                if download_error[0]:
+                    self.log_message(f"\n✗ Error downloading video {idx}, stopping playlist download")
+                    break
+
+            # All videos downloaded
+            self.download_progress_bar['value'] = 100
+            self.download_progress_label.config(text=f"Completed downloading {total_videos} videos")
+            self.log_message(f"\n{'='*70}")
+            self.log_message(f"✓ Playlist download complete! Downloaded {total_videos} videos")
+            self.log_message(f"{'='*70}")
+
+            # Re-enable download button
+            self.download_btn.configure(state='normal')
+            self.cancel_btn.configure(state='disabled')
+            self.status_var.set("Playlist download complete")
+
+            # Show completion message
+            self.root.after(0, lambda: messagebox.showinfo("Download Complete",
+                f"Successfully downloaded {total_videos} videos from the playlist!"))
+
+            # Hide progress bar after notification
+            self.root.after(0, lambda: self.download_progress_frame.grid_remove())
+
+        # Start download in separate thread
+        thread = threading.Thread(target=download_playlist_thread, daemon=True)
+        thread.start()
 
     def _start_template_download(self):
         """Start download using custom template"""

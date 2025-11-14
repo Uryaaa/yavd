@@ -29,7 +29,8 @@ class Downloader:
         on_error: Callable[[str], None],
         on_download_started: Callable[[], None] = None,
         on_progress: Callable[[dict], None] = None,
-        mode: str = "auto"
+        mode: str = "auto",
+        is_playlist_item: bool = False
     ):
         """
         Start download in a separate thread
@@ -48,8 +49,9 @@ class Downloader:
             on_download_started: Optional callback when actual download starts
             on_progress: Optional callback for progress dict with keys: 'percent', 'speed', 'eta', 'downloaded', 'total'
             mode: Download mode ('video', 'audio', or 'auto')
+            is_playlist_item: Whether this is part of a playlist download
         """
-        if self.is_downloading:
+        if self.is_downloading and not is_playlist_item:
             on_error("A download is already in progress")
             return
 
@@ -337,7 +339,7 @@ class Downloader:
         Get yt-dlp format string based on quality selection
 
         Args:
-            quality: Quality selection ('best', '1080', '720', '480', '360', 'worst')
+            quality: Quality selection ('best', '1080', '720', '480', '360', 'worst', or with fps like '1080_25fps')
 
         Returns:
             Format string for yt-dlp
@@ -347,8 +349,20 @@ class Downloader:
         elif quality == "worst":
             return "worstvideo[ext=mp4]+worstaudio[ext=m4a]/worst[ext=mp4]/worst"
         else:
-            # Specific resolution (e.g., 1080, 720, 480, 360)
-            return f"bestvideo[height<={quality}][ext=mp4]+bestaudio[ext=m4a]/best[height<={quality}][ext=mp4]/best"
+            # Specific resolution (e.g., 1080, 720, 480, 360, or with fps like 1080_25fps)
+            # Extract resolution and fps if included
+            parts = quality.split('_')
+            resolution = parts[0]
+
+            # Build format string with optional fps filter
+            if len(parts) > 1 and parts[1].endswith('fps'):
+                # Extract fps number (e.g., "25fps" -> "25")
+                fps = parts[1].rstrip('fps')
+                # Include fps filter for more precise selection
+                return f"bestvideo[height<={resolution}][fps={fps}][ext=mp4]+bestaudio[ext=m4a]/best[height<={resolution}][fps={fps}][ext=mp4]/best"
+            else:
+                # No fps specified, just use resolution
+                return f"bestvideo[height<={resolution}][ext=mp4]+bestaudio[ext=m4a]/best[height<={resolution}][ext=mp4]/best"
 
     def _find_downloaded_file(self, output_dir: str, cmd: list) -> Optional[str]:
         """

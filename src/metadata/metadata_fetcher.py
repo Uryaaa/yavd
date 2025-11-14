@@ -51,7 +51,7 @@ class MetadataFetcher:
     ):
         """
         Execute metadata fetch in background thread
-        
+
         Args:
             yt_dlp_path: Path to yt-dlp executable
             url: Video URL to fetch metadata for
@@ -59,9 +59,17 @@ class MetadataFetcher:
             on_error: Callback function when fetch fails
         """
         self.is_fetching = True
-        
+
         try:
-            # Build command to get JSON metadata
+            # First, detect if this is a playlist
+            playlist_info = self._detect_playlist(yt_dlp_path, url)
+
+            if playlist_info['is_playlist']:
+                # Handle playlist
+                on_success(playlist_info)
+                return
+
+            # Build command to get JSON metadata for single video
             cmd = [
                 yt_dlp_path,
                 "--dump-json",
@@ -69,7 +77,7 @@ class MetadataFetcher:
                 "--skip-download",
                 url
             ]
-            
+
             # Execute command and capture output
             process = subprocess.Popen(
                 cmd,
@@ -79,9 +87,9 @@ class MetadataFetcher:
                 errors='replace',
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
             )
-            
+
             stdout, stderr = process.communicate(timeout=30)
-            
+
             if process.returncode == 0:
                 # Parse JSON metadata
                 metadata = json.loads(stdout)
@@ -106,22 +114,98 @@ class MetadataFetcher:
                     'available_framerates': formats_data['framerates'],
                     'available_audio_bitrates': formats_data['audio_bitrates'],
                     'format_details': formats_data['details'],
+                    'is_playlist': False,
                 }
 
                 on_success(video_info)
             else:
                 on_error(f"Failed to fetch metadata: {stderr}")
-        
+
         except subprocess.TimeoutExpired:
             on_error("Metadata fetch timed out (30 seconds)")
         except json.JSONDecodeError as e:
             on_error(f"Failed to parse metadata: {str(e)}")
         except Exception as e:
             on_error(f"Error fetching metadata: {str(e)}")
-        
+
         finally:
             self.is_fetching = False
     
+    def _detect_playlist(self, yt_dlp_path: str, url: str) -> dict:
+        """
+        Detect if URL is a playlist and fetch playlist information
+
+        Args:
+            yt_dlp_path: Path to yt-dlp executable
+            url: URL to check
+
+        Returns:
+            Dictionary with playlist info or empty dict if not a playlist
+        """
+        try:
+            # Use --flat-playlist to get playlist structure
+            cmd = [
+                yt_dlp_path,
+                "--dump-json",
+                "--flat-playlist",
+                "--skip-download",
+                url
+            ]
+
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                encoding='utf-8',
+                errors='replace',
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+            )
+
+            stdout, stderr = process.communicate(timeout=30)
+
+            if process.returncode == 0:
+                # Read first line to check structure
+                lines = stdout.strip().split('\n')
+                if lines:
+                    first_entry = json.loads(lines[0])
+
+                    # Check if this is a playlist (has n_entries and playlist_id)
+                    n_entries = first_entry.get('n_entries', 0)
+                    playlist_id = first_entry.get('playlist_id', '')
+
+                    if n_entries > 1 or (n_entries > 0 and playlist_id):
+                        # This is a playlist
+                        playlist_title = first_entry.get('playlist_title', 'Playlist')
+
+                        # Parse all entries to get video list
+                        videos = []
+                        for line in lines:
+                            try:
+                                entry = json.loads(line)
+                                videos.append({
+                                    'id': entry.get('id', ''),
+                                    'title': entry.get('title', 'Unknown'),
+                                    'url': entry.get('url', ''),
+                                    'duration': entry.get('duration', 0),
+                                    'thumbnail': entry.get('thumbnails', [{}])[0].get('url', '') if entry.get('thumbnails') else '',
+                                })
+                            except json.JSONDecodeError:
+                                continue
+
+                        return {
+                            'is_playlist': True,
+                            'playlist_id': playlist_id,
+                            'playlist_title': playlist_title,
+                            'n_entries': n_entries,
+                            'videos': videos,
+                        }
+
+        except Exception as e:
+            # If playlist detection fails, return empty dict
+            pass
+
+        return {'is_playlist': False}
+
     @staticmethod
     def _process_formats(formats: list) -> dict:
         """
@@ -231,11 +315,14 @@ class MetadataFetcher:
         """
         if seconds <= 0:
             return "00:00:00"
-        
+
+        # Convert to int to handle both int and float inputs
+        seconds = int(seconds)
+
         hours = seconds // 3600
         minutes = (seconds % 3600) // 60
         secs = seconds % 60
-        
+
         return f"{hours:02d}:{minutes:02d}:{secs:02d}"
     
     @staticmethod
