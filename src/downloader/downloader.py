@@ -123,7 +123,7 @@ class Downloader:
             skip_thumbnail_embed = bool(trim_start or trim_end)
 
             # Build command based on format
-            cmd = self._build_command(yt_dlp_path, url, output_dir, format_type, quality, trim_start, trim_end, skip_thumbnail_embed)
+            cmd = self._build_command(yt_dlp_path, url, output_dir, format_type, quality, trim_start, trim_end, skip_thumbnail_embed, mode)
 
             on_log(f"Executing: {' '.join(cmd)}\n")
             on_log("-" * 70)
@@ -276,7 +276,7 @@ class Downloader:
         except Exception:
             return None
 
-    def _build_command(self, yt_dlp_path: str, url: str, output_dir: str, format_type: str, quality: str, trim_start: Optional[str], trim_end: Optional[str], skip_thumbnail_embed: bool = False) -> list:
+    def _build_command(self, yt_dlp_path: str, url: str, output_dir: str, format_type: str, quality: str, trim_start: Optional[str], trim_end: Optional[str], skip_thumbnail_embed: bool = False, mode: str = "auto") -> list:
         """
         Build yt-dlp command based on format type and quality
 
@@ -287,6 +287,7 @@ class Downloader:
             format_type: Format type ('mp4', 'mkv', 'avi', 'mov', 'mp3', 'wav', 'aac', 'm4a', etc.)
             quality: Quality selection ('best', '1080', '720', '480', '360', 'worst', or specific resolution)
             skip_thumbnail_embed: If True, download thumbnail but don't embed it (for trimming)
+            mode: Download mode ('video', 'audio', or 'auto')
 
         Returns:
             List of command arguments
@@ -325,7 +326,11 @@ class Downloader:
 
         else:
             # Video formats
-            format_str = self._get_video_format_string(quality)
+            # For video-only mode, use video-only format string
+            if mode == "video":
+                format_str = self._get_video_only_format_string(quality)
+            else:
+                format_str = self._get_video_format_string(quality)
 
             cmd = [
                 yt_dlp_path,
@@ -384,6 +389,36 @@ class Downloader:
             else:
                 # No fps specified, just use resolution
                 return f"bestvideo[height<={resolution}][ext=mp4]+bestaudio[ext=m4a]/best[height<={resolution}][ext=mp4]/best"
+
+    def _get_video_only_format_string(self, quality: str) -> str:
+        """
+        Get yt-dlp format string for video-only (no audio)
+
+        Args:
+            quality: Quality selection ('best', '1080', '720', '480', '360', 'worst', or with fps like '1080_25fps')
+
+        Returns:
+            Format string for yt-dlp (video only)
+        """
+        if quality == "best":
+            return "bestvideo[ext=mp4]/best[ext=mp4]/bestvideo/best"
+        elif quality == "worst":
+            return "worstvideo[ext=mp4]/worst[ext=mp4]/worstvideo/worst"
+        else:
+            # Specific resolution (e.g., 1080, 720, 480, 360, or with fps like 1080_25fps)
+            # Extract resolution and fps if included
+            parts = quality.split('_')
+            resolution = parts[0]
+
+            # Build format string with optional fps filter (video only)
+            if len(parts) > 1 and parts[1].endswith('fps'):
+                # Extract fps number (e.g., "25fps" -> "25")
+                fps = parts[1].rstrip('fps')
+                # Include fps filter for more precise selection
+                return f"bestvideo[height<={resolution}][fps={fps}][ext=mp4]/best[height<={resolution}][fps={fps}][ext=mp4]/bestvideo[height<={resolution}][fps={fps}]/best"
+            else:
+                # No fps specified, just use resolution
+                return f"bestvideo[height<={resolution}][ext=mp4]/best[height<={resolution}][ext=mp4]/bestvideo[height<={resolution}]/best"
 
     def _find_downloaded_file(self, output_dir: str, cmd: list) -> Optional[str]:
         """

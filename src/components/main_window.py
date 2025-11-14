@@ -746,7 +746,7 @@ class MainWindow:
         ttk.Label(mode_frame, text="Mode:", font=('Arial', 8, 'bold')).pack(side=tk.LEFT, padx=(0, 8))
 
         self.mode_var = tk.StringVar(value="auto")
-        ttk.Radiobutton(mode_frame, text="🎥 Video Only", variable=self.mode_var,
+        ttk.Radiobutton(mode_frame, text="🎥 Video Only (muted)", variable=self.mode_var,
                        value="video", command=self._on_mode_changed).pack(side=tk.LEFT, padx=(0, 10))
         ttk.Radiobutton(mode_frame, text="🎵 Audio Only", variable=self.mode_var,
                        value="audio", command=self._on_mode_changed).pack(side=tk.LEFT, padx=(0, 10))
@@ -784,14 +784,18 @@ class MainWindow:
                                          state='readonly', width=30)
         self.quality_combo.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 5))
 
-        # Audio bitrate selection
-        ttk.Label(self.quality_label_frame, text="Audio Bitrate:", font=('Arial', 8, 'bold')).grid(
-            row=2, column=0, sticky=tk.W, pady=(0, 3))
+        # Audio bitrate selection (in a separate frame so it can be hidden independently)
+        self.audio_bitrate_frame = ttk.Frame(self.quality_label_frame)
+        self.audio_bitrate_frame.grid(row=2, column=0, sticky=(tk.W, tk.E))
+        self.audio_bitrate_frame.columnconfigure(0, weight=1)
+
+        ttk.Label(self.audio_bitrate_frame, text="Audio Bitrate:", font=('Arial', 8, 'bold')).grid(
+            row=0, column=0, sticky=tk.W, pady=(0, 3))
 
         self.audio_bitrate_var = tk.StringVar(value="best")
-        self.audio_bitrate_combo = ttk.Combobox(self.quality_label_frame, textvariable=self.audio_bitrate_var,
+        self.audio_bitrate_combo = ttk.Combobox(self.audio_bitrate_frame, textvariable=self.audio_bitrate_var,
                                                state='readonly', width=30)
-        self.audio_bitrate_combo.grid(row=3, column=0, sticky=(tk.W, tk.E))
+        self.audio_bitrate_combo.grid(row=1, column=0, sticky=(tk.W, tk.E))
 
         # Store mapping of display names to values
         self.quality_mapping = {}
@@ -1141,6 +1145,15 @@ class MainWindow:
         mode = self.mode_var.get()
         if mode == "audio":
             self.format_var.set("mp3")
+            # Show audio bitrate for audio mode
+            self.audio_bitrate_frame.grid()
+        elif mode == "video":
+            # Hide audio bitrate for video-only mode
+            self.audio_bitrate_frame.grid_remove()
+        else:  # auto mode
+            # Show audio bitrate for auto mode
+            self.audio_bitrate_frame.grid()
+
         # Update format options based on mode
         self._update_format_options(self.current_metadata.get('available_formats', ['MP4', 'MP3'])
                                    if self.current_metadata else ['MP4', 'MP3'])
