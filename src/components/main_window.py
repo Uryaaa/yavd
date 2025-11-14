@@ -609,9 +609,11 @@ class MainWindow:
         # Instruction label
         instruction_label = ttk.Label(
             parent,
-            text="💡 Tip: Paste a video URL and click 'Fetch Info' to see available formats, resolutions, and framerates",
+            text="💡 Tip: Paste a video URL - it will auto-fetch info automatically. If auto-fetch doesn't work, click 'Fetch Info' to manually fetch available formats, resolutions, and framerates",
             font=('Arial', 7),
-            foreground='gray'
+            foreground='gray',
+            wraplength=400,
+            justify=tk.LEFT
         )
         instruction_label.grid(row=2, column=0, sticky=tk.W, pady=(0, 5))
 

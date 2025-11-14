@@ -59,7 +59,13 @@ class ContextMenu:
         try:
             if isinstance(self.widget, tk.Entry):
                 has_text = len(self.widget.get()) > 0
-                has_selection = len(self.widget.selection_get()) > 0 if self.widget.select_present() else False
+                # For Entry widget, check if there's a selection
+                try:
+                    selection = self.widget.selection_get()
+                    has_selection = len(selection) > 0
+                except tk.TclError:
+                    # No selection
+                    has_selection = False
             else:  # Text widget
                 has_text = len(self.widget.get("1.0", tk.END).strip()) > 0
                 has_selection = len(self.widget.tag_ranges(tk.SEL)) > 0
@@ -69,7 +75,9 @@ class ContextMenu:
         # Check clipboard
         has_clipboard = False
         try:
-            clipboard_text = self.widget.master.clipboard_get()
+            # Get the root window to access clipboard
+            root = self.widget.winfo_toplevel()
+            clipboard_text = root.clipboard_get()
             has_clipboard = len(clipboard_text.strip()) > 0
         except tk.TclError:
             pass
@@ -79,7 +87,6 @@ class ContextMenu:
         if menu_items is not None:
             for i in range(menu_items + 1):
                 try:
-                    label = self.menu.index(i)
                     item_label = self.menu.entryconfig(i, "label")[4][4]
 
                     if item_label == "Cut":
