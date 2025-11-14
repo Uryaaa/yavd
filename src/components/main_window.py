@@ -1082,12 +1082,11 @@ class MainWindow:
             widget.destroy()
         self.format_radios = []
 
-        # Ensure MP3 and OPUS are always available for audio
+        # Ensure MP3 are always available for audio
         formats = list(formats)
         if 'MP3' not in formats:
             formats.append('MP3')
-        if 'OPUS' not in formats:
-            formats.append('OPUS')
+        
 
         # Create radio buttons for each format
         for idx, fmt in enumerate(formats):
