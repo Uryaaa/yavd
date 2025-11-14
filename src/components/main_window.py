@@ -1310,12 +1310,22 @@ class MainWindow:
             trim_start = self.trim_start_entry.get().strip()
             trim_end = self.trim_end_entry.get().strip()
 
-            # Validate time format
-            if not self._validate_time_format(trim_start) or not self._validate_time_format(trim_end):
-                messagebox.showerror("Invalid Time", "Please use HH:MM:SS format for trim times")
+            # Validate time format (allow empty fields)
+            if trim_start and not self._validate_time_format(trim_start):
+                messagebox.showerror("Invalid Time", "Please use HH:MM:SS format for start time")
                 self.download_btn.configure(state='normal')
                 self.status_var.set("Ready")
                 return
+
+            if trim_end and not self._validate_time_format(trim_end):
+                messagebox.showerror("Invalid Time", "Please use HH:MM:SS format for end time")
+                self.download_btn.configure(state='normal')
+                self.status_var.set("Ready")
+                return
+
+            # Convert empty strings to None
+            trim_start = trim_start if trim_start else None
+            trim_end = trim_end if trim_end else None
 
         # Get mode (video/audio/auto)
         mode = self.mode_var.get()

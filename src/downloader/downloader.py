@@ -381,10 +381,20 @@ class Downloader:
         # Wait a moment for file system to update
         time.sleep(0.5)
 
-        # Look for mp4 and mp3 files
+        # Look for all common media files (not just mp4 and mp3)
         patterns = [
             os.path.join(output_dir, "*.mp4"),
-            os.path.join(output_dir, "*.mp3")
+            os.path.join(output_dir, "*.mp3"),
+            os.path.join(output_dir, "*.opus"),
+            os.path.join(output_dir, "*.wav"),
+            os.path.join(output_dir, "*.aac"),
+            os.path.join(output_dir, "*.m4a"),
+            os.path.join(output_dir, "*.mkv"),
+            os.path.join(output_dir, "*.avi"),
+            os.path.join(output_dir, "*.mov"),
+            os.path.join(output_dir, "*.flv"),
+            os.path.join(output_dir, "*.webm"),
+            os.path.join(output_dir, "*.flac"),
         ]
 
         files = []
@@ -424,18 +434,19 @@ class Downloader:
             # Build FFmpeg command
             cmd = ["ffmpeg", "-y", "-i", input_file]
 
-            # Add start time if specified (before input for faster seeking)
+            # Add start time if specified (after input for accurate seeking)
             if start_time and start_time != "00:00:00":
-                cmd.insert(1, "-ss")
-                cmd.insert(2, start_time)
+                cmd.extend(["-ss", start_time])
 
             # Add end time if specified
             if end_time and end_time != "00:00:00":
                 cmd.extend(["-to", end_time])
 
             # Copy streams without re-encoding for speed
+            # Use -map_metadata to preserve metadata including thumbnails
             cmd.extend([
                 "-c", "copy",
+                "-map_metadata", "0",
                 "-avoid_negative_ts", "make_zero",
                 output_file
             ])
