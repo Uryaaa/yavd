@@ -8,10 +8,12 @@ from typing import Callable, Optional
 
 class Downloader:
     """Handles yt-dlp download operations"""
-    
+
     def __init__(self):
         """Initialize downloader"""
         self.is_downloading = False
+        self.current_process = None
+        self.should_cancel = False
     
     def download(
         self,
@@ -26,7 +28,8 @@ class Downloader:
         on_complete: Callable[[], None],
         on_error: Callable[[str], None],
         on_download_started: Callable[[], None] = None,
-        on_progress: Callable[[dict], None] = None
+        on_progress: Callable[[dict], None] = None,
+        mode: str = "auto"
     ):
         """
         Start download in a separate thread
@@ -35,7 +38,7 @@ class Downloader:
             yt_dlp_path: Path to yt-dlp executable
             url: Video URL to download
             output_dir: Output directory for downloaded files
-            format_type: Format type ('mp4' or 'mp3')
+            format_type: Format type ('mp4', 'mp3', etc.)
             quality: Quality selection ('best', '1080', '720', '480', '360', 'worst')
             trim_start: Start time for trimming (HH:MM:SS format) or None
             trim_end: End time for trimming (HH:MM:SS format) or None
@@ -44,18 +47,37 @@ class Downloader:
             on_error: Callback function when download fails
             on_download_started: Optional callback when actual download starts
             on_progress: Optional callback for progress dict with keys: 'percent', 'speed', 'eta', 'downloaded', 'total'
+            mode: Download mode ('video', 'audio', or 'auto')
         """
         if self.is_downloading:
             on_error("A download is already in progress")
             return
 
+        # Reset cancel flag
+        self.should_cancel = False
+
         # Start download in separate thread
         thread = threading.Thread(
             target=self._download_thread,
-            args=(yt_dlp_path, url, output_dir, format_type, quality, trim_start, trim_end, on_log, on_complete, on_error, on_download_started, on_progress),
+            args=(yt_dlp_path, url, output_dir, format_type, quality, trim_start, trim_end, on_log, on_complete, on_error, on_download_started, on_progress, mode),
             daemon=True
         )
         thread.start()
+
+    def cancel_download(self):
+        """Cancel the current download"""
+        self.should_cancel = True
+        if self.current_process:
+            try:
+                self.current_process.terminate()
+                # Give it a moment to terminate gracefully
+                import time
+                time.sleep(0.5)
+                if self.current_process.poll() is None:
+                    # If still running, force kill
+                    self.current_process.kill()
+            except Exception:
+                pass
     
     def _download_thread(
         self,
@@ -70,7 +92,8 @@ class Downloader:
         on_complete: Callable[[], None],
         on_error: Callable[[str], None],
         on_download_started: Callable[[], None] = None,
-        on_progress: Callable[[dict], None] = None
+        on_progress: Callable[[dict], None] = None,
+        mode: str = "auto"
     ):
         """
         Execute download in background thread
@@ -79,7 +102,7 @@ class Downloader:
             yt_dlp_path: Path to yt-dlp executable
             url: Video URL to download
             output_dir: Output directory for downloaded files
-            format_type: Format type ('mp4' or 'mp3')
+            format_type: Format type ('mp4', 'mp3', etc.)
             quality: Quality selection ('best', '1080', '720', '480', '360', 'worst')
             trim_start: Start time for trimming (HH:MM:SS format) or None
             trim_end: End time for trimming (HH:MM:SS format) or None
@@ -88,6 +111,7 @@ class Downloader:
             on_error: Callback function when download fails
             on_download_started: Optional callback when actual download starts
             on_progress: Optional callback for progress dict with keys: 'percent', 'speed', 'eta', 'downloaded', 'total'
+            mode: Download mode ('video', 'audio', or 'auto')
         """
         self.is_downloading = True
         download_started = False
@@ -110,8 +134,17 @@ class Downloader:
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
             )
 
+            # Store process reference for cancellation
+            self.current_process = process
+
             # Read output line by line
             for line in process.stdout:
+                # Check if download was cancelled
+                if self.should_cancel:
+                    process.terminate()
+                    on_log("\n✗ Download cancelled by user")
+                    break
+
                 on_log(line.rstrip())
 
                 # Detect when actual download starts
@@ -136,7 +169,10 @@ class Downloader:
 
             process.wait()
 
-            if process.returncode == 0:
+            # Check if download was cancelled
+            if self.should_cancel:
+                on_error("Download cancelled by user")
+            elif process.returncode == 0:
                 on_log("-" * 70)
                 on_log("✓ Download completed successfully!")
 
@@ -168,13 +204,14 @@ class Downloader:
                 on_log("-" * 70)
                 on_log(f"✗ Download failed with error code: {process.returncode}")
                 on_error("Check the output log for details")
-        
+
         except Exception as e:
             on_log(f"✗ Error: {str(e)}")
             on_error(str(e))
-        
+
         finally:
             self.is_downloading = False
+            self.current_process = None
 
     def _parse_progress_line(self, line: str) -> Optional[dict]:
         """
@@ -241,41 +278,59 @@ class Downloader:
             yt_dlp_path: Path to yt-dlp executable
             url: Video URL to download
             output_dir: Output directory for downloaded files
-            format_type: Format type ('mp4' or 'mp3')
-            quality: Quality selection ('best', '1080', '720', '480', '360', 'worst')
+            format_type: Format type ('mp4', 'mkv', 'avi', 'mov', 'mp3', 'wav', 'aac', 'm4a', etc.)
+            quality: Quality selection ('best', '1080', '720', '480', '360', 'worst', or specific resolution)
 
         Returns:
             List of command arguments
         """
         output_template = os.path.join(output_dir, "%(title)s.%(ext)s")
+        format_type_lower = format_type.lower()
 
-        if format_type == "mp4":
-            # Build format string based on quality
-            format_str = self._get_video_format_string(quality)
+        # Audio-only formats
+        audio_formats = ['mp3', 'wav', 'aac', 'm4a', 'opus', 'vorbis', 'flac']
 
-            # Download video+audio in mp4 format with metadata
-            return [
-                yt_dlp_path,
-                "-f", format_str,
-                "--merge-output-format", "mp4",
-                "--embed-metadata",  # Embed title, artist, description, etc.
-                "--embed-thumbnail",  # Embed thumbnail as cover art
-                "-o", output_template,
-                url
-            ]
-        else:  # mp3
-            # Extract audio and convert to mp3 with metadata and thumbnail as cover art
-            return [
+        if format_type_lower in audio_formats:
+            # Extract audio and convert to specified format
+            cmd = [
                 yt_dlp_path,
                 "-x",
-                "--audio-format", "mp3",
+                "--audio-format", format_type_lower,
                 "--audio-quality", "0",
-                "--embed-metadata",  # Embed title, artist, description, etc.
-                "--embed-thumbnail",  # Embed video thumbnail as cover art
-                "--ppa", "ThumbnailsConvertor+ffmpeg_o:-c:v mjpeg -vf crop=\"'if(gt(ih,iw),iw,ih)':'if(gt(iw,ih),ih,iw)'\"",  # Convert thumbnail to JPEG format
+                "--embed-metadata",
+                "--embed-thumbnail",
+            ]
+
+            # Add thumbnail conversion for formats that support it
+            if format_type_lower in ['mp3', 'aac', 'm4a']:
+                cmd.extend([
+                    "--ppa", "ThumbnailsConvertor+ffmpeg_o:-c:v mjpeg -vf crop=\"'if(gt(ih,iw),iw,ih)':'if(gt(iw,ih),ih,iw)'\"",
+                ])
+
+            cmd.extend(["-o", output_template, url])
+            return cmd
+
+        else:
+            # Video formats
+            format_str = self._get_video_format_string(quality)
+
+            cmd = [
+                yt_dlp_path,
+                "-f", format_str,
+            ]
+
+            # Set merge output format for video formats
+            if format_type_lower in ['mp4', 'mkv', 'avi', 'mov', 'flv', 'webm']:
+                cmd.extend(["--merge-output-format", format_type_lower])
+
+            cmd.extend([
+                "--embed-metadata",
+                "--embed-thumbnail",
                 "-o", output_template,
                 url
-            ]
+            ])
+
+            return cmd
 
     def _get_video_format_string(self, quality: str) -> str:
         """

@@ -6,6 +6,8 @@ import os
 from pathlib import Path
 from io import BytesIO
 import urllib.request
+import re
+from urllib.parse import urlparse
 
 try:
     from PIL import Image, ImageTk
@@ -19,6 +21,7 @@ from ..metadata import MetadataFetcher
 from ..ytdlp_manager import YtdlpDownloader
 from ..ffmpeg_manager import FFmpegDownloader
 from ..templates import TemplateManager
+from .context_menu import ContextMenu
 
 
 class MainWindow:
@@ -71,6 +74,9 @@ class MainWindow:
 
         # Store current template command (if using template)
         self.current_template_command = None
+
+        # Track if metadata has been fetched
+        self.metadata_fetched = False
 
         # Create UI
         self.create_widgets()
@@ -278,6 +284,8 @@ class MainWindow:
         self.ytdlp_save_entry.grid(row=0, column=0, sticky=(tk.W, tk.E), padx=(0, 5))
         default_path = str(Path.home() / "Downloads" / "yt-dlp.exe")
         self.ytdlp_save_entry.insert(0, default_path)
+        # Add context menu
+        ContextMenu(self.ytdlp_save_entry)
 
         ttk.Button(location_frame, text="📁 Browse...",
                   command=self._browse_ytdlp_save_location).grid(row=0, column=1)
@@ -330,6 +338,8 @@ class MainWindow:
         self.ffmpeg_save_entry.grid(row=0, column=0, sticky=(tk.W, tk.E), padx=(0, 5))
         default_path = str(Path.home() / "Downloads" / "ffmpeg.exe")
         self.ffmpeg_save_entry.insert(0, default_path)
+        # Add context menu
+        ContextMenu(self.ffmpeg_save_entry)
 
         ttk.Button(location_frame, text="📁 Browse...",
                   command=self._browse_ffmpeg_save_location).grid(row=0, column=1)
@@ -485,6 +495,8 @@ class MainWindow:
                                         font=('Consolas', 8), padx=4, pady=3,
                                         relief=tk.SOLID, borderwidth=1)
         self.template_cmd_text.grid(row=0, column=0, sticky=(tk.W, tk.E))
+        # Add context menu (read-only mode)
+        ContextMenu(self.template_cmd_text, read_only=True)
 
         # Action buttons
         btn_frame = ttk.Frame(details_frame)
@@ -511,12 +523,16 @@ class MainWindow:
             row=0, column=0, sticky=tk.W, padx=(0, 8), pady=(0, 2))
         self.new_template_name = ttk.Entry(add_frame, font=('Arial', 8))
         self.new_template_name.grid(row=0, column=1, sticky=(tk.W, tk.E), pady=(0, 2))
+        # Add context menu
+        ContextMenu(self.new_template_name)
 
         # Description field
         ttk.Label(add_frame, text="Description:", font=('Arial', 8)).grid(
             row=1, column=0, sticky=tk.W, padx=(0, 8), pady=(0, 2))
         self.new_template_desc = ttk.Entry(add_frame, font=('Arial', 8))
         self.new_template_desc.grid(row=1, column=1, sticky=(tk.W, tk.E), pady=(0, 2))
+        # Add context menu
+        ContextMenu(self.new_template_desc)
 
         # Command field
         ttk.Label(add_frame, text="Command:", font=('Arial', 8)).grid(
@@ -530,6 +546,8 @@ class MainWindow:
                                        font=('Consolas', 8), padx=4, pady=3,
                                        relief=tk.SOLID, borderwidth=1)
         self.new_template_cmd.grid(row=0, column=0, sticky=(tk.W, tk.E))
+        # Add context menu
+        ContextMenu(self.new_template_cmd)
 
         # Add button
         add_btn_frame = ttk.Frame(add_frame)
@@ -552,6 +570,8 @@ class MainWindow:
 
         self.yt_dlp_entry = ttk.Entry(path_frame, width=50)
         self.yt_dlp_entry.grid(row=0, column=0, sticky=(tk.W, tk.E), padx=(0, 3))
+        # Add context menu
+        ContextMenu(self.yt_dlp_entry)
 
         self.yt_dlp_browse_btn = ttk.Button(path_frame, text="📁 Browse...", command=self.browse_yt_dlp)
         self.yt_dlp_browse_btn.grid(row=0, column=1, sticky=tk.W)
@@ -567,12 +587,33 @@ class MainWindow:
 
         self.url_entry = ttk.Entry(url_frame, width=50, font=('Arial', 9))
         self.url_entry.grid(row=0, column=0, sticky=(tk.W, tk.E), padx=(0, 3))
+        # Bind events for auto-fetch
+        self.url_entry.bind('<KeyRelease>', self._on_url_changed)
+        # Also bind Ctrl+V for paste events
+        self.url_entry.bind('<Control-v>', self._on_url_changed)
+        # Add context menu with paste callback for auto-fetch
+        ContextMenu(self.url_entry, on_paste_callback=self._on_url_changed)
 
         paste_btn = ttk.Button(url_frame, text="📋 Paste", command=self.paste_url)
         paste_btn.grid(row=0, column=1, padx=(0, 3))
 
         fetch_btn = ttk.Button(url_frame, text="ℹ️ Fetch Info", command=self.fetch_video_info)
         fetch_btn.grid(row=0, column=2)
+
+        # Store fetch button for later reference
+        self.fetch_btn = fetch_btn
+
+        # Auto-fetch timer
+        self.auto_fetch_timer = None
+
+        # Instruction label
+        instruction_label = ttk.Label(
+            parent,
+            text="💡 Tip: Paste a video URL and click 'Fetch Info' to see available formats, resolutions, and framerates",
+            font=('Arial', 7),
+            foreground='gray'
+        )
+        instruction_label.grid(row=2, column=0, sticky=tk.W, pady=(0, 5))
 
     def _create_metadata_section(self, parent):
         """Create video metadata display section"""
@@ -649,6 +690,8 @@ class MainWindow:
         self.trim_start_entry = ttk.Entry(time_frame, width=12, state='disabled')
         self.trim_start_entry.grid(row=0, column=1, sticky=tk.W, padx=(0, 8))
         self.trim_start_entry.insert(0, "00:00:00")
+        # Add context menu
+        ContextMenu(self.trim_start_entry)
 
         # End time
         ttk.Label(time_frame, text="End:", font=('Arial', 8)).grid(
@@ -656,6 +699,8 @@ class MainWindow:
         self.trim_end_entry = ttk.Entry(time_frame, width=12, state='disabled')
         self.trim_end_entry.grid(row=0, column=3, sticky=tk.W)
         self.trim_end_entry.insert(0, "00:00:00")
+        # Add context menu
+        ContextMenu(self.trim_end_entry)
 
         # Help text
         help_text = ttk.Label(self.trim_frame,
@@ -678,60 +723,91 @@ class MainWindow:
         self.output_entry = ttk.Entry(output_frame, width=50, font=('Arial', 9))
         self.output_entry.grid(row=0, column=0, sticky=(tk.W, tk.E), padx=(0, 3))
         self.output_entry.insert(0, str(Path.home() / "Downloads"))
+        # Add context menu
+        ContextMenu(self.output_entry)
 
         browse_btn = ttk.Button(output_frame, text="📁 Browse...", command=self.browse_output)
         browse_btn.grid(row=0, column=1)
 
     def _create_format_section(self, parent):
         """Create format selection section"""
-        ttk.Label(parent, text="🎬 Format:", font=('Arial', 9, 'bold')).grid(
-            row=6, column=0, sticky=tk.W, pady=(0, 2))
+        # Label frame for format and mode selection
+        self.format_label_frame = ttk.LabelFrame(parent, text="🎬 Download Options", padding="3")
+        self.format_label_frame.grid(row=6, column=0, sticky=(tk.W, tk.E), pady=(0, 8))
+        self.format_label_frame.columnconfigure(0, weight=1)
 
-        format_frame = ttk.Frame(parent)
-        format_frame.grid(row=7, column=0, sticky=tk.W, pady=(0, 8))
+        # Mode selection (Video Only, Audio Only, Auto)
+        mode_frame = ttk.Frame(self.format_label_frame)
+        mode_frame.grid(row=0, column=0, sticky=tk.W, pady=(0, 5))
+
+        ttk.Label(mode_frame, text="Mode:", font=('Arial', 8, 'bold')).pack(side=tk.LEFT, padx=(0, 8))
+
+        self.mode_var = tk.StringVar(value="auto")
+        ttk.Radiobutton(mode_frame, text="🎥 Video Only", variable=self.mode_var,
+                       value="video", command=self._on_mode_changed).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Radiobutton(mode_frame, text="🎵 Audio Only", variable=self.mode_var,
+                       value="audio", command=self._on_mode_changed).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Radiobutton(mode_frame, text="⚙️ Auto", variable=self.mode_var,
+                       value="auto", command=self._on_mode_changed).pack(side=tk.LEFT)
+
+        # Format selection
+        format_frame = ttk.Frame(self.format_label_frame)
+        format_frame.grid(row=1, column=0, sticky=tk.W, pady=(0, 5))
+
+        ttk.Label(format_frame, text="Format:", font=('Arial', 8, 'bold')).pack(side=tk.LEFT, padx=(0, 8))
 
         self.format_var = tk.StringVar(value="mp4")
-        mp4_radio = ttk.Radiobutton(format_frame, text="🎥 MP4 (Video)", variable=self.format_var,
-                       value="mp4")
-        mp4_radio.grid(row=0, column=0, padx=(0, 15))
+        self.format_radios = []
+        self.format_radio_frame = ttk.Frame(format_frame)
+        self.format_radio_frame.pack(side=tk.LEFT)
+        self._update_format_options(['MP4', 'MP3'])
 
-        mp3_radio = ttk.Radiobutton(format_frame, text="🎵 MP3 (Audio)", variable=self.format_var,
-                       value="mp3")
-        mp3_radio.grid(row=0, column=1)
+        # Hide initially
+        self.format_label_frame.grid_remove()
 
     def _create_quality_section(self, parent):
         """Create quality selection section"""
-        ttk.Label(parent, text="⭐ Quality:", font=('Arial', 9, 'bold')).grid(
-            row=8, column=0, sticky=tk.W, pady=(0, 2))
-
-        quality_frame = ttk.Frame(parent)
-        quality_frame.grid(row=9, column=0, sticky=(tk.W, tk.E), pady=(0, 8))
-        quality_frame.columnconfigure(0, weight=1)
+        self.quality_label_frame = ttk.LabelFrame(parent, text="⭐ Quality & Resolution", padding="3")
+        self.quality_label_frame.grid(row=7, column=0, sticky=(tk.W, tk.E), pady=(0, 8))
+        self.quality_label_frame.columnconfigure(0, weight=1)
 
         self.quality_var = tk.StringVar(value="best")
-        quality_options = [
-            ("Best Quality", "best"),
-            ("1080p", "1080"),
-            ("720p", "720"),
-            ("480p", "480"),
-            ("360p", "360"),
-            ("Worst (smallest)", "worst")
-        ]
 
-        self.quality_combo = ttk.Combobox(quality_frame, textvariable=self.quality_var,
-                                         state='readonly', width=25)
-        self.quality_combo['values'] = [opt[0] for opt in quality_options]
-        self.quality_combo.current(0)
-        self.quality_combo.grid(row=0, column=0, sticky=(tk.W, tk.E))
+        # Quality combobox
+        ttk.Label(self.quality_label_frame, text="Resolution:", font=('Arial', 8, 'bold')).grid(
+            row=0, column=0, sticky=tk.W, pady=(0, 3))
+
+        self.quality_combo = ttk.Combobox(self.quality_label_frame, textvariable=self.quality_var,
+                                         state='readonly', width=30)
+        self.quality_combo.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 5))
+
+        # Audio bitrate selection
+        ttk.Label(self.quality_label_frame, text="Audio Bitrate:", font=('Arial', 8, 'bold')).grid(
+            row=2, column=0, sticky=tk.W, pady=(0, 3))
+
+        self.audio_bitrate_var = tk.StringVar(value="best")
+        self.audio_bitrate_combo = ttk.Combobox(self.quality_label_frame, textvariable=self.audio_bitrate_var,
+                                               state='readonly', width=30)
+        self.audio_bitrate_combo.grid(row=3, column=0, sticky=(tk.W, tk.E))
 
         # Store mapping of display names to values
-        self.quality_mapping = {opt[0]: opt[1] for opt in quality_options}
+        self.quality_mapping = {}
+        self.audio_bitrate_mapping = {}
+
+        # Set default options
+        self._update_quality_options(['Best Quality', '1080p', '720p', '480p', '360p', 'Worst (smallest)'],
+                                     ['best', '1080', '720', '480', '360', 'worst'])
+        self._update_audio_bitrate_options(['Best', '320k', '256k', '192k', '128k'],
+                                          ['best', '320', '256', '192', '128'])
+
+        # Hide initially
+        self.quality_label_frame.grid_remove()
 
     def _create_download_button(self, parent):
         """Create download button and progress bar"""
         # Progress bar frame (hidden initially)
         self.download_progress_frame = ttk.Frame(parent)
-        self.download_progress_frame.grid(row=10, column=0, sticky=(tk.W, tk.E), pady=(0, 8))
+        self.download_progress_frame.grid(row=8, column=0, sticky=(tk.W, tk.E), pady=(0, 8))
         self.download_progress_frame.columnconfigure(0, weight=1)
 
         self.download_progress_label = ttk.Label(self.download_progress_frame, text="",
@@ -745,15 +821,29 @@ class MainWindow:
         # Initially hide progress
         self.download_progress_frame.grid_remove()
 
-        # Download button
-        self.download_btn = ttk.Button(parent, text="📥 Download",
-                                       command=self.start_download, style='Accent.TButton')
-        self.download_btn.grid(row=11, column=0, pady=(0, 5), sticky=(tk.W, tk.E))
+        # Button frame for Download and Cancel buttons
+        button_frame = ttk.Frame(parent)
+        button_frame.grid(row=9, column=0, pady=(0, 5), sticky=(tk.W, tk.E))
+        button_frame.columnconfigure(0, weight=1)
+        button_frame.columnconfigure(1, weight=0)
+
+        # Download button (disabled until metadata is fetched)
+        self.download_btn = ttk.Button(button_frame, text="📥 Download",
+                                       command=self.start_download, style='Accent.TButton',
+                                       state='disabled')
+        self.download_btn.grid(row=0, column=0, sticky=(tk.W, tk.E), padx=(0, 5))
+
+        # Cancel button (hidden initially)
+        self.cancel_btn = ttk.Button(button_frame, text="⏹️ Cancel",
+                                     command=self.cancel_download, state='disabled')
+        self.cancel_btn.grid(row=0, column=1, sticky=tk.E)
     
     def _create_output_log(self, parent):
         """Create output log section"""
         self.output_text = scrolledtext.ScrolledText(parent, wrap=tk.WORD, state='disabled')
         self.output_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        # Add context menu (read-only mode)
+        ContextMenu(self.output_text, read_only=True)
 
     def _create_status_bar(self, parent):
         """Create status bar"""
@@ -791,6 +881,8 @@ class MainWindow:
             # Insert clipboard text
             self.url_entry.insert(0, clipboard_text.strip())
             self.log_message(f"URL pasted from clipboard")
+            # Trigger auto-fetch
+            self._on_url_changed()
         except tk.TclError:
             # Clipboard is empty or contains non-text data
             messagebox.showwarning("Paste Error", "Clipboard is empty or contains invalid data")
@@ -837,6 +929,45 @@ class MainWindow:
         if thumbnail_url:
             self._load_thumbnail(thumbnail_url)
 
+        # Update format options based on available formats
+        available_formats = metadata.get('available_formats', ['MP4', 'MP3'])
+        self._update_format_options(available_formats)
+
+        # Update quality options based on available resolutions and framerates
+        available_resolutions = metadata.get('available_resolutions', [])
+        available_framerates = metadata.get('available_framerates', [])
+
+        if available_resolutions:
+            # Build quality options with framerate info
+            quality_displays = []
+            quality_values = []
+
+            # Add resolution + framerate combinations
+            for res in available_resolutions:
+                res_num = res.rstrip('p')
+                quality_displays.append(f"{res}")
+                quality_values.append(res_num)
+
+                # Add framerate variants if available
+                for fps in available_framerates:
+                    quality_displays.append(f"{res} {fps}")
+                    quality_values.append(f"{res_num}_{fps}")
+
+            quality_displays.extend(['Best Quality', 'Worst (smallest)'])
+            quality_values.extend(['best', 'worst'])
+            self._update_quality_options(quality_displays, quality_values)
+
+        # Update audio bitrate options
+        available_audio_bitrates = metadata.get('available_audio_bitrates', [])
+        if available_audio_bitrates:
+            bitrate_displays = list(available_audio_bitrates) + ['Best', 'Worst']
+            bitrate_values = [b.rstrip('k') for b in available_audio_bitrates] + ['best', 'worst']
+            self._update_audio_bitrate_options(bitrate_displays, bitrate_values)
+
+        # Show format and quality sections
+        self.format_label_frame.grid()
+        self.quality_label_frame.grid()
+
         # Show metadata frame
         self.metadata_frame.grid()
 
@@ -854,16 +985,128 @@ class MainWindow:
         # Check if scrollbar is needed after showing metadata
         self.root.after(100, self._check_scrollbar_needed)
 
+        # Enable download button now that metadata is fetched
+        self.metadata_fetched = True
+        self.download_btn.configure(state='normal')
+
         self.status_var.set("Video information fetched successfully")
         self.log_message(f"✓ Video: {metadata.get('title', 'Unknown')}")
         self.log_message(f"  Duration: {MetadataFetcher.format_duration(metadata.get('duration', 0))}")
         self.log_message(f"  Uploader: {metadata.get('uploader', 'Unknown')}")
+        self.log_message(f"  Available formats: {', '.join(available_formats)}")
+        if available_resolutions:
+            self.log_message(f"  Available resolutions: {', '.join(available_resolutions)}")
+        if available_framerates:
+            self.log_message(f"  Available framerates: {', '.join(available_framerates)}")
+        if available_audio_bitrates:
+            self.log_message(f"  Available audio bitrates: {', '.join(available_audio_bitrates)}")
 
     def _on_metadata_error(self, error_msg):
         """Handle metadata fetch error"""
         self.status_var.set("Failed to fetch video information")
         self.log_message(f"✗ Error: {error_msg}")
         messagebox.showerror("Fetch Error", f"Failed to fetch video information:\n{error_msg}")
+        # Keep download button disabled on error
+        self.metadata_fetched = False
+        self.download_btn.configure(state='disabled')
+
+    def _update_format_options(self, formats: list):
+        """
+        Update format selection options dynamically
+
+        Args:
+            formats: List of available format strings (e.g., ['MP4', 'MP3', 'MKV'])
+        """
+        # Clear existing radio buttons
+        for widget in self.format_radio_frame.winfo_children():
+            widget.destroy()
+        self.format_radios = []
+
+        # Ensure MP3 and OPUS are always available for audio
+        formats = list(formats)
+        if 'MP3' not in formats:
+            formats.append('MP3')
+        if 'OPUS' not in formats:
+            formats.append('OPUS')
+
+        # Create radio buttons for each format
+        for idx, fmt in enumerate(formats):
+            fmt_lower = fmt.lower()
+            radio = ttk.Radiobutton(
+                self.format_radio_frame,
+                text=f"🎥 {fmt}" if fmt.upper() in ['MP4', 'MKV', 'AVI', 'MOV', 'WEBM', 'FLV'] else f"🎵 {fmt}",
+                variable=self.format_var,
+                value=fmt_lower
+            )
+            radio.pack(side=tk.LEFT, padx=(0, 10))
+            self.format_radios.append(radio)
+
+        # Set MP4 as default for video, MP3 for audio
+        if self.mode_var.get() == "audio":
+            self.format_var.set("mp3")
+        else:
+            self.format_var.set("mp4" if "mp4" in [f.lower() for f in formats] else formats[0].lower())
+
+    def _update_quality_options(self, display_names: list, values: list):
+        """
+        Update quality selection options dynamically
+
+        Args:
+            display_names: List of display names for quality options
+            values: List of corresponding values for quality options
+        """
+        self.quality_combo['values'] = display_names
+        self.quality_mapping = {name: val for name, val in zip(display_names, values)}
+
+        if display_names:
+            self.quality_combo.current(0)
+            self.quality_var.set(display_names[0])
+
+    def _update_audio_bitrate_options(self, display_names: list, values: list):
+        """
+        Update audio bitrate selection options dynamically
+
+        Args:
+            display_names: List of display names for audio bitrate options
+            values: List of corresponding values for audio bitrate options
+        """
+        self.audio_bitrate_combo['values'] = display_names
+        self.audio_bitrate_mapping = {name: val for name, val in zip(display_names, values)}
+
+        if display_names:
+            self.audio_bitrate_combo.current(0)
+            self.audio_bitrate_var.set(display_names[0])
+
+    def _on_mode_changed(self):
+        """Handle mode change (video/audio/auto)"""
+        mode = self.mode_var.get()
+        if mode == "audio":
+            self.format_var.set("mp3")
+        # Update format options based on mode
+        self._update_format_options(self.current_metadata.get('available_formats', ['MP4', 'MP3'])
+                                   if self.current_metadata else ['MP4', 'MP3'])
+
+    def _on_url_changed(self, event=None):
+        """Handle URL entry changes for auto-fetch"""
+        url = self.url_entry.get().strip()
+
+        # Cancel previous timer if exists
+        if self.auto_fetch_timer:
+            self.root.after_cancel(self.auto_fetch_timer)
+
+        # Check if URL is valid
+        if url and self.is_valid_url(url):
+            # Schedule auto-fetch after 1 second of no typing
+            self.auto_fetch_timer = self.root.after(1000, self.fetch_video_info)
+        else:
+            # Hide format/quality sections if URL is invalid
+            if not url:
+                self.format_label_frame.grid_remove()
+                self.quality_label_frame.grid_remove()
+                self.metadata_frame.grid_remove()
+                self.trim_frame.grid_remove()
+                self.download_btn.configure(state='disabled')
+                self.metadata_fetched = False
 
     def _toggle_trim_controls(self):
         """Toggle trim control states"""
@@ -877,7 +1120,7 @@ class MainWindow:
     def log_message(self, message):
         """
         Add message to output log
-        
+
         Args:
             message: Message to log
         """
@@ -885,7 +1128,47 @@ class MainWindow:
         self.output_text.insert(tk.END, message + "\n")
         self.output_text.see(tk.END)
         self.output_text.configure(state='disabled')
-    
+
+    @staticmethod
+    def is_valid_url(url: str) -> bool:
+        """
+        Validate if the input is a valid URL
+
+        Args:
+            url: URL string to validate
+
+        Returns:
+            True if URL is valid, False otherwise
+        """
+        if not url or not isinstance(url, str):
+            return False
+
+        url = url.strip()
+
+        # Check for common video URL patterns
+        video_url_patterns = [
+            r'https?://(www\.)?youtube\.com',
+            r'https?://(www\.)?youtu\.be',
+            r'https?://(www\.)?vimeo\.com',
+            r'https?://(www\.)?dailymotion\.com',
+            r'https?://(www\.)?twitch\.tv',
+            r'https?://(www\.)?tiktok\.com',
+            r'https?://(www\.)?instagram\.com',
+            r'https?://(www\.)?facebook\.com',
+            r'https?://(www\.)?twitter\.com',
+            r'https?://(www\.)?x\.com',
+            r'https?://(www\.)?reddit\.com',
+            r'https?://(www\.)?bilibili\.com',
+            r'https?://(www\.)?nicovideo\.jp',
+            r'https?://',  # Generic http/https URL
+        ]
+
+        for pattern in video_url_patterns:
+            if re.match(pattern, url, re.IGNORECASE):
+                return True
+
+        return False
+
     def validate_inputs(self):
         """
         Validate user inputs before download
@@ -932,8 +1215,9 @@ class MainWindow:
             self._start_template_download()
             return
 
-        # Disable download button during download
+        # Disable download button and enable cancel button during download
         self.download_btn.configure(state='disabled')
+        self.cancel_btn.configure(state='normal')
         self.status_var.set("Downloading...")
 
         # Show and start progress bar
@@ -973,6 +1257,9 @@ class MainWindow:
                 self.status_var.set("Ready")
                 return
 
+        # Get mode (video/audio/auto)
+        mode = self.mode_var.get()
+
         # Start download
         self.downloader.download(
             yt_dlp_path=yt_dlp_path,
@@ -986,7 +1273,8 @@ class MainWindow:
             on_complete=self._on_download_complete,
             on_error=self._on_download_error,
             on_download_started=self._on_download_started,
-            on_progress=self._on_download_progress
+            on_progress=self._on_download_progress,
+            mode=mode
         )
 
     def _start_template_download(self):
@@ -1162,6 +1450,7 @@ class MainWindow:
         """Callback when download completes successfully"""
         self.status_var.set("Download completed!")
         self.download_btn.configure(state='normal')
+        self.cancel_btn.configure(state='disabled')
 
         # Set progress bar to 100% and hide
         self.download_progress_bar['value'] = 100
@@ -1180,12 +1469,19 @@ class MainWindow:
         """
         self.status_var.set("Download failed!")
         self.download_btn.configure(state='normal')
+        self.cancel_btn.configure(state='disabled')
 
         # Hide progress bar
         self.download_progress_label.config(text="✗ Download failed!")
         self.root.after(2000, self.download_progress_frame.grid_remove)
 
         messagebox.showerror("Error", f"Download failed: {error_msg}")
+
+    def cancel_download(self):
+        """Cancel the current download"""
+        self.downloader.cancel_download()
+        self.cancel_btn.configure(state='disabled')
+        self.status_var.set("Cancelling download...")
 
     def _format_speed(self, speed_bytes_per_sec):
         """Format download speed in human-readable format

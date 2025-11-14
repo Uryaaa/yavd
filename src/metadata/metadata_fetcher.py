@@ -85,7 +85,10 @@ class MetadataFetcher:
             if process.returncode == 0:
                 # Parse JSON metadata
                 metadata = json.loads(stdout)
-                
+
+                # Extract and process formats
+                formats_data = self._process_formats(metadata.get('formats', []))
+
                 # Extract relevant information
                 video_info = {
                     'title': metadata.get('title', 'Unknown'),
@@ -98,8 +101,13 @@ class MetadataFetcher:
                     'formats': metadata.get('formats', []),
                     'width': metadata.get('width', 0),
                     'height': metadata.get('height', 0),
+                    'available_resolutions': formats_data['resolutions'],
+                    'available_formats': formats_data['formats'],
+                    'available_framerates': formats_data['framerates'],
+                    'available_audio_bitrates': formats_data['audio_bitrates'],
+                    'format_details': formats_data['details'],
                 }
-                
+
                 on_success(video_info)
             else:
                 on_error(f"Failed to fetch metadata: {stderr}")
@@ -114,6 +122,102 @@ class MetadataFetcher:
         finally:
             self.is_fetching = False
     
+    @staticmethod
+    def _process_formats(formats: list) -> dict:
+        """
+        Process available formats from yt-dlp metadata
+
+        Args:
+            formats: List of format dictionaries from yt-dlp
+
+        Returns:
+            Dictionary with keys: 'resolutions', 'formats', 'framerates', 'audio_bitrates', 'quality_options', 'details'
+        """
+        resolutions = set()
+        format_extensions = set()
+        framerates = set()
+        audio_bitrates = set()
+        quality_options = {}  # Maps "resolution fps" to format_id
+        details = []
+
+        for fmt in formats:
+            # Get resolution
+            height = fmt.get('height')
+            width = fmt.get('width')
+            fps = fmt.get('fps')
+
+            # Get format/extension
+            ext = fmt.get('ext', '')
+            if ext:
+                format_extensions.add(ext.upper())
+
+            # Get audio bitrate
+            abr = fmt.get('abr')  # Audio bitrate
+            if abr and abr > 0:
+                audio_bitrates.add(f"{int(abr)}k")
+
+            # Build quality option key (resolution + fps)
+            if height and height > 0:
+                resolutions.add(f"{height}p")
+                if fps and fps > 0:
+                    framerates.add(f"{int(fps)}fps")
+                    quality_key = f"{height}p {int(fps)}fps"
+                else:
+                    quality_key = f"{height}p"
+
+                # Store format_id for this quality option
+                format_id = fmt.get('format_id', '')
+                if format_id and quality_key not in quality_options:
+                    quality_options[quality_key] = format_id
+
+            # Store detailed format info
+            format_info = {
+                'format_id': fmt.get('format_id', ''),
+                'ext': ext,
+                'height': height,
+                'width': width,
+                'fps': fps,
+                'vcodec': fmt.get('vcodec', 'unknown'),
+                'acodec': fmt.get('acodec', 'unknown'),
+                'abr': abr,  # Audio bitrate
+                'tbr': fmt.get('tbr'),  # Total bitrate
+                'filesize': fmt.get('filesize'),
+                'format': fmt.get('format', ''),
+                'has_video': height is not None and height > 0,
+                'has_audio': fmt.get('acodec', 'none') != 'none',
+            }
+            details.append(format_info)
+
+        # Sort resolutions numerically
+        sorted_resolutions = sorted(
+            list(resolutions),
+            key=lambda x: int(x.rstrip('p')),
+            reverse=True
+        )
+
+        # Sort framerates numerically
+        sorted_framerates = sorted(
+            list(framerates),
+            key=lambda x: int(x.rstrip('fps')),
+            reverse=True
+        )
+
+        # Sort audio bitrates numerically
+        sorted_audio_bitrates = sorted(
+            list(audio_bitrates),
+            key=lambda x: int(x.rstrip('k')),
+            reverse=True
+        )
+
+        return {
+            'resolutions': sorted_resolutions,
+            'formats': sorted(list(format_extensions)),
+            'framerates': sorted_framerates,
+            'audio_bitrates': sorted_audio_bitrates,
+            'quality_options': quality_options,
+            'details': details,
+        }
+
     @staticmethod
     def format_duration(seconds: int) -> str:
         """
