@@ -79,6 +79,11 @@ class MainWindow:
         # Track if metadata has been fetched
         self.metadata_fetched = False
 
+        # Playlist caching - avoid re-fetching same playlist
+        self.cached_playlist_url = ''
+        self.cached_playlist_data = None
+        self.selected_video_ids = set()  # Preserve selections when re-opening
+
         # Create UI
         self.create_widgets()
         
@@ -232,8 +237,11 @@ class MainWindow:
         # Output Directory Section
         self._create_output_section(self.download_tab)
 
-        # Format Selection Section
+        # Format Selection Section (Download Options)
         self._create_format_section(self.download_tab)
+
+        # Convert To Section (after Download Options)
+        self._create_convert_section(self.download_tab)
 
         # Quality Selection Section
         self._create_quality_section(self.download_tab)
@@ -714,6 +722,83 @@ class MainWindow:
         # Hide trim frame initially
         self.trim_frame.grid_remove()
 
+    def _create_convert_section(self, parent):
+        """Create convert to format section"""
+        # Convert frame (initially hidden)
+        self.convert_frame = ttk.LabelFrame(parent, text="Convert To (Optional)", padding="3")
+        self.convert_frame.grid(row=7, column=0, sticky=(tk.W, tk.E), pady=(0, 5))
+        self.convert_frame.columnconfigure(0, weight=0)
+
+        # Enable convert checkbox
+        self.convert_enabled = tk.BooleanVar(value=False)
+        ttk.Checkbutton(self.convert_frame, text="Enable conversion",
+                       variable=self.convert_enabled,
+                       command=self._toggle_convert_controls).grid(
+            row=0, column=0, sticky=tk.W, pady=(0, 2))
+
+        # Format buttons frame
+        self.convert_format_frame = ttk.Frame(self.convert_frame)
+        self.convert_format_frame.grid(row=1, column=0, sticky=tk.W)
+
+        # Convert format variable
+        self.convert_format_var = tk.StringVar(value="mp4")
+
+        # Video formats
+        self.video_convert_formats = ['mp4', 'mkv', 'avi', 'mov', 'webm', 'flv']
+        # Audio formats
+        self.audio_convert_formats = ['mp3', 'wav', 'aac', 'm4a', 'opus', 'vorbis', 'flac', 'ogg']
+
+        # Create format radio buttons (will be updated based on mode)
+        self._update_convert_format_options()
+
+        # Help text
+        help_text = ttk.Label(self.convert_frame,
+                             text="Convert downloaded file to selected format using ffmpeg",
+                             font=('Arial', 7), foreground='gray')
+        help_text.grid(row=2, column=0, sticky=tk.W, pady=(2, 0))
+
+        # Hide convert frame initially
+        self.convert_frame.grid_remove()
+
+    def _toggle_convert_controls(self):
+        """Toggle convert control states"""
+        if self.convert_enabled.get():
+            for child in self.convert_format_frame.winfo_children():
+                child.configure(state='normal')
+        else:
+            for child in self.convert_format_frame.winfo_children():
+                child.configure(state='disabled')
+
+    def _update_convert_format_options(self):
+        """Update convert format options based on current mode"""
+        # Clear existing buttons
+        for child in self.convert_format_frame.winfo_children():
+            child.destroy()
+
+        mode = self.mode_var.get() if hasattr(self, 'mode_var') else 'auto'
+
+        # Choose formats based on mode
+        if mode == 'audio':
+            formats = self.audio_convert_formats
+        else:
+            formats = self.video_convert_formats
+
+        # Create radio buttons
+        for idx, fmt in enumerate(formats):
+            state = 'normal' if self.convert_enabled.get() else 'disabled'
+            radio = ttk.Radiobutton(
+                self.convert_format_frame,
+                text=fmt.upper(),
+                value=fmt,
+                variable=self.convert_format_var,
+                state=state
+            )
+            radio.grid(row=0, column=idx, padx=(0, 5))
+
+        # Set default value
+        if formats:
+            self.convert_format_var.set(formats[0])
+
     def _create_output_section(self, parent):
         """Create output directory selection section"""
         ttk.Label(parent, text="📂 Output Directory:", font=('Arial', 9, 'bold')).grid(
@@ -771,7 +856,7 @@ class MainWindow:
     def _create_quality_section(self, parent):
         """Create quality selection section"""
         self.quality_label_frame = ttk.LabelFrame(parent, text="⭐ Quality & Resolution", padding="3")
-        self.quality_label_frame.grid(row=7, column=0, sticky=(tk.W, tk.E), pady=(0, 8))
+        self.quality_label_frame.grid(row=8, column=0, sticky=(tk.W, tk.E), pady=(0, 8))
         self.quality_label_frame.columnconfigure(0, weight=1)
 
         self.quality_var = tk.StringVar(value="best")
@@ -814,7 +899,7 @@ class MainWindow:
         """Create download button and progress bar"""
         # Progress bar frame (hidden initially)
         self.download_progress_frame = ttk.Frame(parent)
-        self.download_progress_frame.grid(row=8, column=0, sticky=(tk.W, tk.E), pady=(0, 8))
+        self.download_progress_frame.grid(row=9, column=0, sticky=(tk.W, tk.E), pady=(0, 8))
         self.download_progress_frame.columnconfigure(0, weight=1)
 
         self.download_progress_label = ttk.Label(self.download_progress_frame, text="",
@@ -906,6 +991,15 @@ class MainWindow:
             messagebox.showwarning("No yt-dlp", "Please select yt-dlp executable first")
             return
 
+        # Check if we have cached playlist data for this URL
+        if (self.cached_playlist_url == url and
+            self.cached_playlist_data is not None and
+            self.cached_playlist_data.get('is_playlist', False)):
+            # Use cached data - show playlist selector immediately
+            self.log_message("Using cached playlist data...")
+            self._handle_playlist_detected(self.cached_playlist_data, use_cache=True)
+            return
+
         self.status_var.set("Fetching video information...")
         self.log_message("Fetching video metadata...")
 
@@ -923,6 +1017,13 @@ class MainWindow:
 
         # Check if this is a playlist
         if metadata.get('is_playlist', False):
+            # Cache playlist data for this URL
+            url = self.url_entry.get().strip()
+            self.cached_playlist_url = url
+            self.cached_playlist_data = metadata
+            # Reset selections for new playlist
+            self.selected_video_ids = set()
+
             self._handle_playlist_detected(metadata)
             return
 
@@ -986,6 +1087,10 @@ class MainWindow:
         # Show trim frame
         self.trim_frame.grid()
 
+        # Show convert frame and update options based on mode
+        self.convert_frame.grid()
+        self._update_convert_format_options()
+
         # Update end time in trim section to video duration
         duration_str = MetadataFetcher.format_duration(metadata.get('duration', 0))
         self.trim_end_entry.delete(0, tk.END)
@@ -1022,14 +1127,17 @@ class MainWindow:
         self.metadata_fetched = False
         self.download_btn.configure(state='disabled')
 
-    def _handle_playlist_detected(self, playlist_info):
+    def _handle_playlist_detected(self, playlist_info, use_cache=False):
         """Handle detected playlist"""
         playlist_title = playlist_info.get('playlist_title', 'Playlist')
         n_entries = playlist_info.get('n_entries', 0)
 
-        self.status_var.set(f"Playlist detected: {playlist_title} ({n_entries} videos)")
-        self.log_message(f"✓ Playlist detected: {playlist_title}")
-        self.log_message(f"  Total videos: {n_entries}")
+        if use_cache:
+            self.log_message(f"✓ Using cached playlist: {playlist_title}")
+        else:
+            self.status_var.set(f"Playlist detected: {playlist_title} ({n_entries} videos)")
+            self.log_message(f"✓ Playlist detected: {playlist_title}")
+            self.log_message(f"  Total videos: {n_entries}")
 
         # Show playlist selector dialog
         def on_videos_selected(selected_videos):
@@ -1043,6 +1151,9 @@ class MainWindow:
             # Store selected videos for download
             self.current_metadata['selected_videos'] = selected_videos
             self.current_metadata['is_playlist'] = True
+
+            # Save selected video IDs for cache preservation
+            self.selected_video_ids = {v.get('id', '') for v in selected_videos if v.get('id')}
 
             # Show metadata for first selected video
             first_video = selected_videos[0]
@@ -1071,44 +1182,79 @@ class MainWindow:
 
             self.status_var.set("Ready to download playlist videos")
 
-        # Create and show playlist selector
-        PlaylistSelector(self.root, playlist_info, on_videos_selected)
+        # Create and show playlist selector with initial selections
+        PlaylistSelector(self.root, playlist_info, on_videos_selected,
+                        initial_selected_ids=self.selected_video_ids)
 
     def _update_format_options(self, formats: list):
         """
-        Update format selection options dynamically
+        Update format selection options dynamically based on mode.
+        Only shows formats from yt-dlp metadata, filtered by current mode.
 
         Args:
-            formats: List of available format strings (e.g., ['MP4', 'MP3', 'MKV'])
+            formats: List of available format strings (e.g., ['MP4', 'WEBM', 'M4A'])
         """
         # Clear existing radio buttons
         for widget in self.format_radio_frame.winfo_children():
             widget.destroy()
         self.format_radios = []
 
-        # Ensure MP3 are always available for audio
-        formats = list(formats)
-        if 'MP3' not in formats:
-            formats.append('MP3')
-        
+        # Define format categories
+        video_formats = ['mp4', 'webm', 'mkv', 'avi', 'mov', 'flv', 'mhtml']
+        audio_formats = ['m4a', 'mp3', 'wav', 'aac', 'opus', 'vorbis', 'flac', 'ogg', 'weba']
+
+        # Get current mode
+        mode = self.mode_var.get() if hasattr(self, 'mode_var') else 'auto'
+
+        # Filter formats based on mode
+        filtered_formats = []
+        for fmt in formats:
+            fmt_lower = fmt.lower()
+            if mode == 'audio':
+                # Audio mode: only show audio formats
+                if fmt_lower in audio_formats:
+                    filtered_formats.append(fmt)
+            elif mode == 'video':
+                # Video mode: only show video formats
+                if fmt_lower in video_formats:
+                    filtered_formats.append(fmt)
+            else:
+                # Auto mode: show all formats
+                filtered_formats.append(fmt)
+
+        # If no formats after filtering, use defaults based on mode
+        if not filtered_formats:
+            if mode == 'audio':
+                filtered_formats = ['M4A']
+            else:
+                filtered_formats = ['MP4']
 
         # Create radio buttons for each format
-        for idx, fmt in enumerate(formats):
+        for fmt in filtered_formats:
             fmt_lower = fmt.lower()
+            is_video = fmt_lower in video_formats
             radio = ttk.Radiobutton(
                 self.format_radio_frame,
-                text=f"🎥 {fmt}" if fmt.upper() in ['MP4', 'MKV', 'AVI', 'MOV', 'WEBM', 'FLV'] else f"🎵 {fmt}",
+                text=f"🎥 {fmt.upper()}" if is_video else f"🎵 {fmt.upper()}",
                 variable=self.format_var,
                 value=fmt_lower
             )
             radio.pack(side=tk.LEFT, padx=(0, 10))
             self.format_radios.append(radio)
 
-        # Set MP4 as default for video, MP3 for audio
-        if self.mode_var.get() == "audio":
-            self.format_var.set("mp3")
+        # Set default value based on mode
+        if mode == 'audio':
+            # Prefer m4a for audio
+            if 'm4a' in [f.lower() for f in filtered_formats]:
+                self.format_var.set('m4a')
+            else:
+                self.format_var.set(filtered_formats[0].lower())
         else:
-            self.format_var.set("mp4" if "mp4" in [f.lower() for f in formats] else formats[0].lower())
+            # Prefer mp4 for video/auto
+            if 'mp4' in [f.lower() for f in filtered_formats]:
+                self.format_var.set('mp4')
+            else:
+                self.format_var.set(filtered_formats[0].lower())
 
     def _update_quality_options(self, display_names: list, values: list):
         """
@@ -1158,6 +1304,9 @@ class MainWindow:
         self._update_format_options(self.current_metadata.get('available_formats', ['MP4', 'MP3'])
                                    if self.current_metadata else ['MP4', 'MP3'])
 
+        # Update convert format options based on mode
+        self._update_convert_format_options()
+
     def _on_url_changed(self, event=None):
         """Handle URL entry changes for auto-fetch"""
         url = self.url_entry.get().strip()
@@ -1177,6 +1326,7 @@ class MainWindow:
                 self.quality_label_frame.grid_remove()
                 self.metadata_frame.grid_remove()
                 self.trim_frame.grid_remove()
+                self.convert_frame.grid_remove()
                 self.download_btn.configure(state='disabled')
                 self.metadata_fetched = False
 
@@ -1342,6 +1492,10 @@ class MainWindow:
         # Get mode (video/audio/auto)
         mode = self.mode_var.get()
 
+        # Get convert options
+        convert_enabled = self.convert_enabled.get()
+        convert_format = self.convert_format_var.get() if convert_enabled else ""
+
         # Check if this is a playlist download
         if self.current_metadata.get('is_playlist', False):
             selected_videos = self.current_metadata.get('selected_videos', [])
@@ -1353,7 +1507,9 @@ class MainWindow:
                 quality=quality,
                 trim_start=trim_start,
                 trim_end=trim_end,
-                mode=mode
+                mode=mode,
+                convert_enabled=convert_enabled,
+                convert_format=convert_format
             )
             return
 
@@ -1371,16 +1527,17 @@ class MainWindow:
             on_error=self._on_download_error,
             on_download_started=self._on_download_started,
             on_progress=self._on_download_progress,
-            mode=mode
+            mode=mode,
+            convert_enabled=convert_enabled,
+            convert_format=convert_format
         )
 
-    def _start_playlist_download(self, yt_dlp_path, selected_videos, output_dir, format_type, quality, trim_start, trim_end, mode):
+    def _start_playlist_download(self, yt_dlp_path, selected_videos, output_dir, format_type, quality, trim_start, trim_end, mode, convert_enabled=False, convert_format=""):
         """Start downloading multiple videos from a playlist"""
         import threading
 
         def download_playlist_thread():
             """Download videos in a separate thread"""
-            import time
             total_videos = len(selected_videos)
             download_event = threading.Event()
             download_error = [False]  # Use list to allow modification in nested function
@@ -1427,7 +1584,9 @@ class MainWindow:
                     on_download_started=self._on_download_started,
                     on_progress=self._on_download_progress,
                     mode=mode,
-                    is_playlist_item=True
+                    is_playlist_item=True,
+                    convert_enabled=convert_enabled,
+                    convert_format=convert_format
                 )
 
                 # Wait for this video to complete

@@ -7,21 +7,24 @@ from typing import Callable, Optional, List, Dict, Any
 
 class PlaylistSelector:
     """Dialog for selecting videos from a playlist"""
-    
-    def __init__(self, parent, playlist_info: Dict[str, Any], on_select: Callable):
+
+    def __init__(self, parent, playlist_info: Dict[str, Any], on_select: Callable,
+                 initial_selected_ids: Optional[set] = None):
         """
         Initialize playlist selector dialog
-        
+
         Args:
             parent: Parent window
             playlist_info: Dictionary with playlist data (videos, playlist_title, n_entries)
             on_select: Callback function with selected videos
+            initial_selected_ids: Optional set of video IDs to pre-select
         """
         self.parent = parent
         self.playlist_info = playlist_info
         self.on_select = on_select
         self.selected_videos = []
         self.select_all_var = tk.BooleanVar(value=False)
+        self.initial_selected_ids = initial_selected_ids or set()
         
         # Create dialog window
         self.dialog = tk.Toplevel(parent)
@@ -75,12 +78,21 @@ class PlaylistSelector:
         self.video_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.config(command=self.video_listbox.yview)
         
-        # Populate listbox
+        # Populate listbox and pre-select videos if initial_selected_ids provided
         videos = self.playlist_info.get('videos', [])
         for idx, video in enumerate(videos):
             title = video.get('title', 'Unknown')
             self.video_listbox.insert(tk.END, f"{idx+1}. {title}")
-        
+
+            # Pre-select if this video was previously selected
+            video_id = video.get('id', '')
+            if video_id and video_id in self.initial_selected_ids:
+                self.video_listbox.select_set(idx)
+
+        # Update select all checkbox state
+        if len(self.initial_selected_ids) == len(videos) and len(videos) > 0:
+            self.select_all_var.set(True)
+
         # Button frame
         button_frame = ttk.Frame(self.dialog)
         button_frame.pack(fill=tk.X, padx=10, pady=10)

@@ -30,7 +30,9 @@ class Downloader:
         on_download_started: Callable[[], None] = None,
         on_progress: Callable[[dict], None] = None,
         mode: str = "auto",
-        is_playlist_item: bool = False
+        is_playlist_item: bool = False,
+        convert_enabled: bool = False,
+        convert_format: str = ""
     ):
         """
         Start download in a separate thread
@@ -50,6 +52,8 @@ class Downloader:
             on_progress: Optional callback for progress dict with keys: 'percent', 'speed', 'eta', 'downloaded', 'total'
             mode: Download mode ('video', 'audio', or 'auto')
             is_playlist_item: Whether this is part of a playlist download
+            convert_enabled: Whether to convert after download
+            convert_format: Target format for conversion
         """
         if self.is_downloading and not is_playlist_item:
             on_error("A download is already in progress")
@@ -61,7 +65,7 @@ class Downloader:
         # Start download in separate thread
         thread = threading.Thread(
             target=self._download_thread,
-            args=(yt_dlp_path, url, output_dir, format_type, quality, trim_start, trim_end, on_log, on_complete, on_error, on_download_started, on_progress, mode),
+            args=(yt_dlp_path, url, output_dir, format_type, quality, trim_start, trim_end, on_log, on_complete, on_error, on_download_started, on_progress, mode, convert_enabled, convert_format),
             daemon=True
         )
         thread.start()
@@ -95,7 +99,9 @@ class Downloader:
         on_error: Callable[[str], None],
         on_download_started: Callable[[], None] = None,
         on_progress: Callable[[dict], None] = None,
-        mode: str = "auto"
+        mode: str = "auto",
+        convert_enabled: bool = False,
+        convert_format: str = ""
     ):
         """
         Execute download in background thread
@@ -114,6 +120,8 @@ class Downloader:
             on_download_started: Optional callback when actual download starts
             on_progress: Optional callback for progress dict with keys: 'percent', 'speed', 'eta', 'downloaded', 'total'
             mode: Download mode ('video', 'audio', or 'auto')
+            convert_enabled: Whether to convert after download
+            convert_format: Target format for conversion
         """
         self.is_downloading = True
         download_started = False
@@ -123,7 +131,7 @@ class Downloader:
             skip_thumbnail_embed = bool(trim_start or trim_end)
 
             # Build command based on format
-            cmd = self._build_command(yt_dlp_path, url, output_dir, format_type, quality, trim_start, trim_end, skip_thumbnail_embed, mode)
+            cmd = self._build_command(yt_dlp_path, url, output_dir, format_type, quality, trim_start, trim_end, skip_thumbnail_embed, mode, convert_enabled, convert_format)
 
             on_log(f"Executing: {' '.join(cmd)}\n")
             on_log("-" * 70)
@@ -276,7 +284,7 @@ class Downloader:
         except Exception:
             return None
 
-    def _build_command(self, yt_dlp_path: str, url: str, output_dir: str, format_type: str, quality: str, trim_start: Optional[str], trim_end: Optional[str], skip_thumbnail_embed: bool = False, mode: str = "auto") -> list:
+    def _build_command(self, yt_dlp_path: str, url: str, output_dir: str, format_type: str, quality: str, trim_start: Optional[str], trim_end: Optional[str], skip_thumbnail_embed: bool = False, mode: str = "auto", convert_enabled: bool = False, convert_format: str = "") -> list:
         """
         Build yt-dlp command based on format type and quality
 
@@ -288,22 +296,31 @@ class Downloader:
             quality: Quality selection ('best', '1080', '720', '480', '360', 'worst', or specific resolution)
             skip_thumbnail_embed: If True, download thumbnail but don't embed it (for trimming)
             mode: Download mode ('video', 'audio', or 'auto')
+            convert_enabled: Whether to convert after download
+            convert_format: Target format for conversion
 
         Returns:
             List of command arguments
         """
+        # Suppress unused parameter warnings - these are kept for API compatibility
+        _ = trim_start
+        _ = trim_end
+
         output_template = os.path.join(output_dir, "%(title)s.%(ext)s")
         format_type_lower = format_type.lower()
 
         # Audio-only formats
-        audio_formats = ['mp3', 'wav', 'aac', 'm4a', 'opus', 'vorbis', 'flac']
+        audio_formats = ['mp3', 'wav', 'aac', 'm4a', 'opus', 'vorbis', 'flac', 'ogg']
 
-        if format_type_lower in audio_formats:
+        if format_type_lower in audio_formats or mode == "audio":
             # Extract audio and convert to specified format
+            # Use convert format if enabled, otherwise use format_type
+            audio_output_format = convert_format.lower() if convert_enabled and convert_format else format_type_lower
+
             cmd = [
                 yt_dlp_path,
                 "-x",
-                "--audio-format", format_type_lower,
+                "--audio-format", audio_output_format,
                 "--audio-quality", "0",
                 "--embed-metadata",
             ]
@@ -316,7 +333,7 @@ class Downloader:
                 # Embed thumbnail directly
                 cmd.append("--embed-thumbnail")
                 # Add thumbnail conversion for formats that support it
-                if format_type_lower in ['mp3', 'aac', 'm4a']:
+                if audio_output_format in ['mp3', 'aac', 'm4a']:
                     cmd.extend([
                         "--ppa", "ThumbnailsConvertor+ffmpeg_o:-c:v mjpeg -vf crop=\"'if(gt(ih,iw),iw,ih)':'if(gt(iw,ih),ih,iw)'\"",
                     ])
@@ -352,6 +369,14 @@ class Downloader:
             else:
                 # Embed thumbnail directly
                 cmd.append("--embed-thumbnail")
+
+            # Add conversion option if enabled (for video modes)
+            if convert_enabled and convert_format:
+                convert_format_lower = convert_format.lower()
+                # Video conversion formats
+                video_convert_formats = ['mp4', 'mkv', 'avi', 'mov', 'webm', 'flv']
+                if convert_format_lower in video_convert_formats:
+                    cmd.extend(["--recode-video", convert_format_lower])
 
             cmd.extend([
                 "-o", output_template,

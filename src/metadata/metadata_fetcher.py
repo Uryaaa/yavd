@@ -178,12 +178,28 @@ class MetadataFetcher:
                         playlist_title = first_entry.get('playlist_title', 'Playlist')
 
                         # Parse all entries to get video list
+                        # Use a set to track seen IDs and prevent duplicates
+                        seen_ids = set()
                         videos = []
                         for line in lines:
                             try:
                                 entry = json.loads(line)
+
+                                # Skip playlist metadata entries (they have _type: 'playlist')
+                                if entry.get('_type') == 'playlist':
+                                    continue
+
+                                # Get video ID for deduplication
+                                video_id = entry.get('id', '')
+
+                                # Skip if we've already seen this video or if no ID
+                                if not video_id or video_id in seen_ids:
+                                    continue
+
+                                seen_ids.add(video_id)
+
                                 videos.append({
-                                    'id': entry.get('id', ''),
+                                    'id': video_id,
                                     'title': entry.get('title', 'Unknown'),
                                     'url': entry.get('url', ''),
                                     'duration': entry.get('duration', 0),
@@ -196,7 +212,7 @@ class MetadataFetcher:
                             'is_playlist': True,
                             'playlist_id': playlist_id,
                             'playlist_title': playlist_title,
-                            'n_entries': n_entries,
+                            'n_entries': len(videos),  # Use actual count after deduplication
                             'videos': videos,
                         }
 
