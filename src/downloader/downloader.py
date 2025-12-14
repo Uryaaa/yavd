@@ -3,6 +3,9 @@
 import subprocess
 import threading
 import os
+import re
+import time
+import glob
 from typing import Callable, Optional
 
 
@@ -77,7 +80,6 @@ class Downloader:
             try:
                 self.current_process.terminate()
                 # Give it a moment to terminate gracefully
-                import time
                 time.sleep(0.5)
                 if self.current_process.poll() is None:
                     # If still running, force kill
@@ -174,8 +176,6 @@ class Downloader:
 
                 # Parse progress from yt-dlp output
                 if on_progress and '[download]' in line:
-                    # yt-dlp output format: [download]  50.5% of ~123.45MiB at 1.23MiB/s ETA 00:30
-                    import re
                     progress_info = self._parse_progress_line(line)
                     if progress_info:
                         on_progress(progress_info)
@@ -240,8 +240,6 @@ class Downloader:
             Dictionary with keys: 'percent', 'speed', 'eta', 'downloaded', 'total'
             or None if parsing fails
         """
-        import re
-
         try:
             progress_info = {}
 
@@ -266,11 +264,8 @@ class Downloader:
                 progress_info['eta'] = eta_match.group(1)
 
             # Try to extract downloaded size from the line
-            # Format might be like "[download]  50.5% of ~123.45MiB at 1.23MiB/s ETA 00:30"
-            # We can calculate it from percentage and total
             if 'percent' in progress_info and 'total' in progress_info:
                 total_str = progress_info['total']
-                # Extract numeric value and unit
                 total_match = re.search(r'(\d+\.?\d*)([KMG]iB)', total_str)
                 if total_match:
                     total_value = float(total_match.group(1))
@@ -302,7 +297,7 @@ class Downloader:
         Returns:
             List of command arguments
         """
-        # Suppress unused parameter warnings - these are kept for API compatibility
+        # Suppress unused parameter warnings
         _ = trim_start
         _ = trim_end
 
@@ -314,7 +309,6 @@ class Downloader:
 
         if format_type_lower in audio_formats or mode == "audio":
             # Extract audio and convert to specified format
-            # Use convert format if enabled, otherwise use format_type
             audio_output_format = convert_format.lower() if convert_enabled and convert_format else format_type_lower
 
             cmd = [
@@ -323,12 +317,15 @@ class Downloader:
                 "--audio-format", audio_output_format,
                 "--audio-quality", "0",
                 "--embed-metadata",
+                "--compat-options", "no-youtube-unavailable-videos",
             ]
 
             # Handle thumbnail based on trimming
             if skip_thumbnail_embed:
                 # Download thumbnail but don't embed it yet (will be embedded after trimming)
                 cmd.append("--write-thumbnail")
+                # Also write thumbnail to a temporary file for later embedding
+                cmd.extend(["--convert-thumbnails", "jpg"])
             else:
                 # Embed thumbnail directly
                 cmd.append("--embed-thumbnail")
@@ -343,7 +340,6 @@ class Downloader:
 
         else:
             # Video formats
-            # For video-only mode, use video-only format string
             if mode == "video":
                 format_str = self._get_video_only_format_string(quality)
             else:
@@ -360,6 +356,7 @@ class Downloader:
 
             cmd.extend([
                 "--embed-metadata",
+                "--compat-options", "no-youtube-unavailable-videos",
             ])
 
             # Handle thumbnail based on trimming
@@ -373,7 +370,6 @@ class Downloader:
             # Add conversion option if enabled (for video modes)
             if convert_enabled and convert_format:
                 convert_format_lower = convert_format.lower()
-                # Video conversion formats
                 video_convert_formats = ['mp4', 'mkv', 'avi', 'mov', 'webm', 'flv']
                 if convert_format_lower in video_convert_formats:
                     cmd.extend(["--recode-video", convert_format_lower])
@@ -396,24 +392,18 @@ class Downloader:
             Format string for yt-dlp
         """
         if quality == "best":
-            return "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
+            return "bv*+ba/b"
         elif quality == "worst":
-            return "worstvideo[ext=mp4]+worstaudio[ext=m4a]/worst[ext=mp4]/worst"
+            return "wv*+wa/w"
         else:
-            # Specific resolution (e.g., 1080, 720, 480, 360, or with fps like 1080_25fps)
-            # Extract resolution and fps if included
             parts = quality.split('_')
             resolution = parts[0]
 
-            # Build format string with optional fps filter
             if len(parts) > 1 and parts[1].endswith('fps'):
-                # Extract fps number (e.g., "25fps" -> "25")
                 fps = parts[1].rstrip('fps')
-                # Include fps filter for more precise selection
-                return f"bestvideo[height<={resolution}][fps={fps}][ext=mp4]+bestaudio[ext=m4a]/best[height<={resolution}][fps={fps}][ext=mp4]/best"
+                return f"bv*[height<={resolution}][fps={fps}]+ba/b[height<={resolution}][fps={fps}]/bv[height<={resolution}][fps={fps}]+ba"
             else:
-                # No fps specified, just use resolution
-                return f"bestvideo[height<={resolution}][ext=mp4]+bestaudio[ext=m4a]/best[height<={resolution}][ext=mp4]/best"
+                return f"bv*[height<={resolution}]+ba/b[height<={resolution}]/bv[height<={resolution}]+ba"
 
     def _get_video_only_format_string(self, quality: str) -> str:
         """
@@ -426,24 +416,18 @@ class Downloader:
             Format string for yt-dlp (video only)
         """
         if quality == "best":
-            return "bestvideo[ext=mp4]/best[ext=mp4]/bestvideo/best"
+            return "bv*/b"
         elif quality == "worst":
-            return "worstvideo[ext=mp4]/worst[ext=mp4]/worstvideo/worst"
+            return "wv*/w"
         else:
-            # Specific resolution (e.g., 1080, 720, 480, 360, or with fps like 1080_25fps)
-            # Extract resolution and fps if included
             parts = quality.split('_')
             resolution = parts[0]
 
-            # Build format string with optional fps filter (video only)
             if len(parts) > 1 and parts[1].endswith('fps'):
-                # Extract fps number (e.g., "25fps" -> "25")
                 fps = parts[1].rstrip('fps')
-                # Include fps filter for more precise selection
-                return f"bestvideo[height<={resolution}][fps={fps}][ext=mp4]/best[height<={resolution}][fps={fps}][ext=mp4]/bestvideo[height<={resolution}][fps={fps}]/best"
+                return f"bv*[height<={resolution}][fps={fps}]/b[height<={resolution}][fps={fps}]/bv[height<={resolution}][fps={fps}]"
             else:
-                # No fps specified, just use resolution
-                return f"bestvideo[height<={resolution}][ext=mp4]/best[height<={resolution}][ext=mp4]/bestvideo[height<={resolution}]/best"
+                return f"bv*[height<={resolution}]/b[height<={resolution}]/bv[height<={resolution}]"
 
     def _find_downloaded_file(self, output_dir: str, cmd: list) -> Optional[str]:
         """
@@ -456,13 +440,10 @@ class Downloader:
         Returns:
             Path to downloaded file or None
         """
-        import glob
-        import time
-
         # Wait a moment for file system to update
         time.sleep(0.5)
 
-        # Look for all common media files (not just mp4 and mp3)
+        # Look for all common media files
         patterns = [
             os.path.join(output_dir, "*.mp4"),
             os.path.join(output_dir, "*.mp3"),
@@ -476,6 +457,7 @@ class Downloader:
             os.path.join(output_dir, "*.flv"),
             os.path.join(output_dir, "*.webm"),
             os.path.join(output_dir, "*.flac"),
+            os.path.join(output_dir, "*.ogg"),
         ]
 
         files = []
@@ -500,7 +482,6 @@ class Downloader:
             Path to thumbnail file or None if not found
         """
         try:
-            import glob
             base, ext = os.path.splitext(input_file)
             base_name = os.path.basename(base)
 
@@ -509,6 +490,7 @@ class Downloader:
                 os.path.join(output_dir, f"{base_name}.jpg"),
                 os.path.join(output_dir, f"{base_name}.png"),
                 os.path.join(output_dir, f"{base_name}.webp"),
+                os.path.join(output_dir, f"{base_name}.jpeg"),
             ]
 
             for pattern in thumbnail_patterns:
@@ -516,7 +498,7 @@ class Downloader:
                     return pattern
 
             # Also try glob pattern for any image files with same base name
-            for ext_pattern in ['*.jpg', '*.png', '*.webp']:
+            for ext_pattern in ['*.jpg', '*.jpeg', '*.png', '*.webp']:
                 files = glob.glob(os.path.join(output_dir, f"{base_name}.{ext_pattern.split('.')[-1]}"))
                 if files:
                     return files[0]
@@ -540,26 +522,60 @@ class Downloader:
         """
         try:
             if not os.path.exists(thumbnail_file):
-                on_log(f"⚠ Thumbnail file not found, skipping re-embedding")
+                on_log(f"⚠ Thumbnail file not found, skipping embedding")
                 return True
 
             base, ext = os.path.splitext(input_file)
+            ext_lower = ext.lower()
             output_file = f"{base}_with_thumb{ext}"
 
-            # Use FFmpeg to embed thumbnail
-            cmd = [
-                "ffmpeg", "-y",
-                "-i", input_file,
-                "-i", thumbnail_file,
-                "-c", "copy",
-                "-map", "0",
-                "-map", "1",
-                "-c:v", "mjpeg",
-                "-disposition:v:1", "attached_pic",
-                output_file
-            ]
+            # Determine appropriate codec and settings based on audio format
+            if ext_lower in ['.mp3', '.aac', '.m4a']:
+                # For MP3/AAC/M4A, use mjpeg codec for thumbnail
+                cmd = [
+                    "ffmpeg", "-y",
+                    "-i", input_file,
+                    "-i", thumbnail_file,
+                    "-c", "copy",
+                    "-map", "0",
+                    "-map", "1",
+                    "-c:v", "mjpeg",
+                    "-disposition:v", "attached_pic",
+                    output_file
+                ]
+            elif ext_lower in ['.flac', '.ogg', '.opus']:
+                # For FLAC/OGG/Opus, preserve original audio codec, copy thumbnail
+                cmd = [
+                    "ffmpeg", "-y",
+                    "-i", input_file,
+                    "-i", thumbnail_file,
+                    "-map", "0:a",
+                    "-map", "1:v",
+                    "-c:a", "copy",
+                    "-c:v", "copy",
+                    "-disposition:v", "attached_pic",
+                    output_file
+                ]
+            elif ext_lower in ['.wav']:
+                # For WAV, we need to convert thumbnail to appropriate format
+                # WAV doesn't support embedded thumbnails in standard way, so we'll skip
+                on_log(f"⚠ WAV format doesn't support embedded thumbnails in standard way")
+                return True
+            else:
+                # Default command for other formats
+                cmd = [
+                    "ffmpeg", "-y",
+                    "-i", input_file,
+                    "-i", thumbnail_file,
+                    "-map", "0",
+                    "-map", "1",
+                    "-c", "copy",
+                    "-c:v", "mjpeg" if ext_lower == '.mp3' else "copy",
+                    "-disposition:v", "attached_pic",
+                    output_file
+                ]
 
-            on_log(f"Re-embedding thumbnail...")
+            on_log(f"Embedding thumbnail...")
 
             process = subprocess.Popen(
                 cmd,
@@ -573,19 +589,20 @@ class Downloader:
             # Read stderr to capture FFmpeg output
             for line in process.stderr:
                 line = line.rstrip()
-                if line and "frame=" in line:
+                if line and ("frame=" in line or "Stream mapping:" in line):
                     on_log(line)
 
             process.wait()
 
             if process.returncode == 0:
                 # Replace original file with thumbnail-embedded version
-                os.remove(input_file)
+                if os.path.exists(input_file):
+                    os.remove(input_file)
                 os.rename(output_file, input_file)
-                on_log(f"✓ Thumbnail re-embedded")
+                on_log(f"✓ Thumbnail embedded successfully")
                 return True
             else:
-                on_log(f"⚠ Failed to re-embed thumbnail (code: {process.returncode})")
+                on_log(f"⚠ Failed to embed thumbnail (code: {process.returncode})")
                 # Clean up failed output file if it exists
                 if os.path.exists(output_file):
                     os.remove(output_file)
@@ -617,14 +634,17 @@ class Downloader:
             True if successful, False otherwise
         """
         try:
-            # Check if this is an audio file (has embedded thumbnail)
+            # Check if this is an audio file (needs thumbnail embedding)
             base, ext = os.path.splitext(input_file)
             ext_lower = ext.lower()
-            is_audio_format = ext_lower in ['.mp3', '.aac', '.m4a', '.opus', '.wav', '.flac']
+            
+            # Define which formats support embedded thumbnails
+            audio_formats_with_thumbnails = ['.mp3', '.aac', '.m4a', '.flac', '.opus', '.ogg']
+            is_audio_with_thumbnail_support = ext_lower in audio_formats_with_thumbnails
 
             # Find thumbnail file downloaded by yt-dlp (if trimming was enabled)
             thumbnail_file = None
-            if is_audio_format and output_dir:
+            if is_audio_with_thumbnail_support and output_dir:
                 thumbnail_file = self._find_thumbnail_file(input_file, output_dir)
                 if thumbnail_file:
                     on_log(f"Found thumbnail: {os.path.basename(thumbnail_file)}")
@@ -632,7 +652,7 @@ class Downloader:
             # Create output filename
             output_file = f"{base}_trimmed{ext}"
 
-            # Build FFmpeg command
+            # Build FFmpeg command for trimming
             cmd = ["ffmpeg", "-y", "-i", input_file]
 
             # Add start time if specified (after input for accurate seeking)
@@ -643,14 +663,23 @@ class Downloader:
             if end_time and end_time != "00:00:00":
                 cmd.extend(["-to", end_time])
 
-            # Copy streams without re-encoding for speed
-            # Use -map_metadata to preserve metadata
-            cmd.extend([
-                "-c", "copy",
-                "-map_metadata", "0",
-                "-avoid_negative_ts", "make_zero",
-                output_file
-            ])
+            # For audio files that support thumbnails, we need to be careful to preserve metadata
+            if is_audio_with_thumbnail_support:
+                cmd.extend([
+                    "-c", "copy",
+                    "-map_metadata", "0",
+                    "-map", "0",
+                    "-avoid_negative_ts", "make_zero",
+                    output_file
+                ])
+            else:
+                # For video or audio without thumbnail support
+                cmd.extend([
+                    "-c", "copy",
+                    "-map_metadata", "0",
+                    "-avoid_negative_ts", "make_zero",
+                    output_file
+                ])
 
             on_log(f"Trimming with FFmpeg...")
             on_log(f"Command: {' '.join(cmd)}")
@@ -679,15 +708,20 @@ class Downloader:
                 os.rename(output_file, input_file)
                 on_log(f"✓ File trimmed: {os.path.basename(input_file)}")
 
-                # Re-embed thumbnail for audio files
-                if is_audio_format and thumbnail_file:
-                    self._embed_thumbnail(input_file, thumbnail_file, on_log)
+                # Re-embed thumbnail for audio files that support it
+                if is_audio_with_thumbnail_support and thumbnail_file:
+                    success = self._embed_thumbnail(input_file, thumbnail_file, on_log)
+                    if not success:
+                        on_log("⚠ Could not embed thumbnail, but file was trimmed successfully")
+                    
                     # Clean up thumbnail file
                     try:
                         if os.path.exists(thumbnail_file):
                             os.remove(thumbnail_file)
                     except Exception as e:
                         on_log(f"⚠ Could not clean up thumbnail file: {str(e)}")
+                elif is_audio_with_thumbnail_support and not thumbnail_file:
+                    on_log("⚠ No thumbnail found to embed")
 
                 return True
             else:
@@ -710,4 +744,3 @@ class Downloader:
         except Exception as e:
             on_log(f"✗ Trim error: {str(e)}")
             return False
-
