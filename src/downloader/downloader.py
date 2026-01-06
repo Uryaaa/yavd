@@ -189,30 +189,50 @@ class Downloader:
                 on_log("-" * 70)
                 on_log("✓ Download completed successfully!")
 
+                # Find the downloaded file for post-processing
+                downloaded_file = self._find_downloaded_file(output_dir, cmd)
+                processing_failed = False
+                current_file = downloaded_file
+
                 # If trimming is enabled, process with FFmpeg
-                if trim_start or trim_end:
+                if current_file and (trim_start or trim_end):
                     on_log("-" * 70)
                     on_log("Starting trim process with FFmpeg...")
 
-                    # Find the downloaded file
-                    downloaded_file = self._find_downloaded_file(output_dir, cmd)
-                    if downloaded_file:
-                        success = self._trim_with_ffmpeg(
-                            downloaded_file,
-                            trim_start,
-                            trim_end,
-                            on_log,
-                            output_dir
-                        )
-                        if success:
-                            on_log("✓ Trim completed successfully!")
-                            on_complete()
-                        else:
-                            on_error("Trim failed - original file preserved")
+                    success = self._trim_with_ffmpeg(
+                        current_file,
+                        trim_start,
+                        trim_end,
+                        on_log,
+                        output_dir
+                    )
+                    if success:
+                        on_log("✓ Trim completed successfully!")
                     else:
-                        on_log("⚠ Could not find downloaded file for trimming")
-                        on_complete()
-                else:
+                        on_error("Trim failed - original file preserved")
+                        processing_failed = True
+
+                # If conversion is enabled, convert with FFmpeg
+                if current_file and convert_enabled and convert_format and not processing_failed:
+                    on_log("-" * 70)
+                    on_log("Starting conversion with FFmpeg...")
+
+                    converted_file = self._convert_with_ffmpeg(
+                        current_file,
+                        convert_format,
+                        on_log,
+                        output_dir
+                    )
+                    if converted_file:
+                        current_file = converted_file
+                        on_log("✓ Conversion completed successfully!")
+                    else:
+                        on_error("Conversion failed - file may be partially processed")
+                        processing_failed = True
+
+                if not processing_failed:
+                    if not current_file:
+                        on_log("⚠ Could not find downloaded file for processing")
                     on_complete()
             else:
                 on_log("-" * 70)
@@ -359,20 +379,18 @@ class Downloader:
                 "--compat-options", "no-youtube-unavailable-videos",
             ])
 
-            # Handle thumbnail based on trimming
-            if skip_thumbnail_embed:
-                # Download thumbnail but don't embed it yet (will be embedded after trimming)
+            # Handle thumbnail based on trimming or conversion
+            # Skip thumbnail embed if trimming or converting (will be handled after FFmpeg processing)
+            skip_embed = skip_thumbnail_embed or convert_enabled
+            if skip_embed:
+                # Download thumbnail but don't embed it yet (will be embedded after processing)
                 cmd.append("--write-thumbnail")
             else:
                 # Embed thumbnail directly
                 cmd.append("--embed-thumbnail")
 
-            # Add conversion option if enabled (for video modes)
-            if convert_enabled and convert_format:
-                convert_format_lower = convert_format.lower()
-                video_convert_formats = ['mp4', 'mkv', 'avi', 'mov', 'webm', 'flv']
-                if convert_format_lower in video_convert_formats:
-                    cmd.extend(["--recode-video", convert_format_lower])
+            # Note: Conversion is now handled by FFmpeg after download, not by yt-dlp
+            # This provides better control and efficiency
 
             cmd.extend([
                 "-o", output_template,
@@ -744,3 +762,155 @@ class Downloader:
         except Exception as e:
             on_log(f"✗ Trim error: {str(e)}")
             return False
+
+    def _convert_with_ffmpeg(
+        self,
+        input_file: str,
+        target_format: str,
+        on_log: Callable[[str], None],
+        output_dir: Optional[str] = None
+    ) -> Optional[str]:
+        """
+        Convert video/audio file to target format using FFmpeg
+
+        Args:
+            input_file: Path to input file
+            target_format: Target format (e.g., 'mp4', 'mkv', 'mp3', etc.)
+            on_log: Logging callback
+            output_dir: Output directory (used to find thumbnail file)
+
+        Returns:
+            Path to converted file if successful, None otherwise
+        """
+        try:
+            base, ext = os.path.splitext(input_file)
+            ext_lower = ext.lower().lstrip('.')
+            target_format_lower = target_format.lower()
+
+            # Skip conversion if already in target format
+            if ext_lower == target_format_lower:
+                on_log(f"File already in {target_format} format, skipping conversion")
+                return input_file
+
+            # Define format categories
+            audio_formats = ['mp3', 'wav', 'aac', 'm4a', 'opus', 'vorbis', 'flac', 'ogg']
+            video_formats = ['mp4', 'mkv', 'avi', 'mov', 'webm', 'flv']
+
+            is_audio_target = target_format_lower in audio_formats
+            is_video_target = target_format_lower in video_formats
+
+            # Find thumbnail file if available
+            thumbnail_file = None
+            if output_dir:
+                thumbnail_file = self._find_thumbnail_file(input_file, output_dir)
+                if thumbnail_file:
+                    on_log(f"Found thumbnail: {os.path.basename(thumbnail_file)}")
+
+            # Create output filename
+            output_file = f"{base}.{target_format_lower}"
+
+            # Build FFmpeg command based on target format
+            cmd = ["ffmpeg", "-y", "-i", input_file]
+
+            if is_audio_target:
+                # Audio conversion
+                codec_map = {
+                    'mp3': ['-c:a', 'libmp3lame', '-q:a', '0'],
+                    'aac': ['-c:a', 'aac', '-b:a', '192k'],
+                    'm4a': ['-c:a', 'aac', '-b:a', '192k'],
+                    'opus': ['-c:a', 'libopus', '-b:a', '128k'],
+                    'vorbis': ['-c:a', 'libvorbis', '-q:a', '6'],
+                    'ogg': ['-c:a', 'libvorbis', '-q:a', '6'],
+                    'flac': ['-c:a', 'flac'],
+                    'wav': ['-c:a', 'pcm_s16le'],
+                }
+                codec_args = codec_map.get(target_format_lower, ['-c:a', 'copy'])
+                cmd.extend(codec_args)
+                cmd.extend(['-vn'])  # No video for audio-only output
+                cmd.append(output_file)
+
+            elif is_video_target:
+                # Video conversion - use copy where possible for speed
+                codec_map = {
+                    'mp4': ['-c:v', 'libx264', '-preset', 'medium', '-crf', '23', '-c:a', 'aac', '-b:a', '192k'],
+                    'mkv': ['-c:v', 'copy', '-c:a', 'copy'],  # MKV is a container, usually can copy
+                    'webm': ['-c:v', 'libvpx-vp9', '-crf', '30', '-b:v', '0', '-c:a', 'libopus', '-b:a', '128k'],
+                    'avi': ['-c:v', 'libx264', '-preset', 'medium', '-crf', '23', '-c:a', 'mp3', '-b:a', '192k'],
+                    'mov': ['-c:v', 'libx264', '-preset', 'medium', '-crf', '23', '-c:a', 'aac', '-b:a', '192k'],
+                    'flv': ['-c:v', 'libx264', '-preset', 'medium', '-crf', '23', '-c:a', 'aac', '-b:a', '128k'],
+                }
+                codec_args = codec_map.get(target_format_lower, ['-c:v', 'copy', '-c:a', 'copy'])
+
+                # For MKV, try to copy streams first (fast), re-encode only if needed
+                if target_format_lower == 'mkv':
+                    cmd.extend(['-c', 'copy'])
+                else:
+                    cmd.extend(codec_args)
+
+                cmd.extend(['-map_metadata', '0'])
+                cmd.append(output_file)
+            else:
+                on_log(f"⚠ Unknown target format: {target_format}")
+                return None
+
+            on_log(f"Converting to {target_format_lower} with FFmpeg...")
+            on_log(f"Command: {' '.join(cmd)}")
+
+            # Execute FFmpeg
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                encoding='utf-8',
+                errors='replace',
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+            )
+
+            # Read stderr (FFmpeg outputs to stderr)
+            for line in process.stderr:
+                line = line.rstrip()
+                if line:
+                    # Only log important lines to avoid spam
+                    if any(x in line for x in ['frame=', 'time=', 'Stream', 'Output', 'Error', 'error']):
+                        on_log(line)
+
+            process.wait()
+
+            if process.returncode == 0:
+                on_log(f"✓ Converted to {target_format_lower}: {os.path.basename(output_file)}")
+
+                # Remove original file
+                try:
+                    os.remove(input_file)
+                except Exception as e:
+                    on_log(f"⚠ Could not remove original file: {str(e)}")
+
+                # Embed thumbnail for audio formats that support it
+                audio_formats_with_thumbnails = ['mp3', 'aac', 'm4a', 'flac', 'opus', 'ogg']
+                if target_format_lower in audio_formats_with_thumbnails and thumbnail_file:
+                    success = self._embed_thumbnail(output_file, thumbnail_file, on_log)
+                    if not success:
+                        on_log("⚠ Could not embed thumbnail, but conversion was successful")
+
+                # Clean up thumbnail file
+                if thumbnail_file and os.path.exists(thumbnail_file):
+                    try:
+                        os.remove(thumbnail_file)
+                    except Exception as e:
+                        on_log(f"⚠ Could not clean up thumbnail file: {str(e)}")
+
+                return output_file
+            else:
+                on_log(f"✗ FFmpeg conversion failed with code: {process.returncode}")
+                # Clean up failed output file if it exists
+                if os.path.exists(output_file):
+                    os.remove(output_file)
+                return None
+
+        except FileNotFoundError:
+            on_log("✗ FFmpeg not found. Please install FFmpeg and add it to PATH")
+            on_log("  Download from: https://ffmpeg.org/download.html")
+            return None
+        except Exception as e:
+            on_log(f"✗ Conversion error: {str(e)}")
+            return None
