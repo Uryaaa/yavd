@@ -1,7 +1,7 @@
 """Playlist selector dialog for choosing videos from a playlist"""
 
 import tkinter as tk
-from tkinter import ttk
+import customtkinter as ctk
 from typing import Callable, Optional, List, Dict, Any
 
 
@@ -25,59 +25,60 @@ class PlaylistSelector:
         self.selected_videos = []
         self.select_all_var = tk.BooleanVar(value=False)
         self.initial_selected_ids = initial_selected_ids or set()
-        
+
         # Create dialog window
-        self.dialog = tk.Toplevel(parent)
+        self.dialog = ctk.CTkToplevel(parent)
         self.dialog.title(f"Select Videos - {playlist_info.get('playlist_title', 'Playlist')}")
         self.dialog.geometry("700x500")
         self.dialog.resizable(True, True)
-        
+
         # Make dialog modal
         self.dialog.transient(parent)
         self.dialog.grab_set()
-        
+
         self._create_widgets()
-        
+
         # Center dialog on parent
         self.dialog.update_idletasks()
         x = parent.winfo_x() + (parent.winfo_width() // 2) - (self.dialog.winfo_width() // 2)
         y = parent.winfo_y() + (parent.winfo_height() // 2) - (self.dialog.winfo_height() // 2)
         self.dialog.geometry(f"+{x}+{y}")
-    
+
     def _create_widgets(self):
         """Create dialog widgets"""
         # Header
-        header_frame = ttk.Frame(self.dialog)
+        header_frame = ctk.CTkFrame(self.dialog)
         header_frame.pack(fill=tk.X, padx=10, pady=10)
-        
-        ttk.Label(header_frame, text=f"Playlist: {self.playlist_info.get('playlist_title', 'Playlist')}",
-                 font=('Arial', 10, 'bold')).pack(anchor=tk.W)
-        ttk.Label(header_frame, text=f"Total videos: {self.playlist_info.get('n_entries', 0)}",
-                 font=('Arial', 9), foreground='gray').pack(anchor=tk.W)
-        
+
+        ctk.CTkLabel(header_frame, text=f"Playlist: {self.playlist_info.get('playlist_title', 'Playlist')}",
+                 font=('Arial', 13, 'bold')).pack(anchor=tk.W, padx=10, pady=(5, 0))
+        ctk.CTkLabel(header_frame, text=f"Total videos: {self.playlist_info.get('n_entries', 0)}",
+                 font=('Arial', 12), text_color='gray').pack(anchor=tk.W, padx=10, pady=(0, 5))
+
         # Control buttons
-        control_frame = ttk.Frame(self.dialog)
+        control_frame = ctk.CTkFrame(self.dialog, fg_color="transparent")
         control_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
-        
-        ttk.Checkbutton(control_frame, text="Select All",
+
+        ctk.CTkCheckBox(control_frame, text="Select All",
                        variable=self.select_all_var,
                        command=self._toggle_select_all).pack(side=tk.LEFT, padx=(0, 10))
-        
-        ttk.Button(control_frame, text="Clear All",
-                  command=self._clear_all).pack(side=tk.LEFT)
-        
+
+        ctk.CTkButton(control_frame, text="Clear All",
+                  command=self._clear_all, width=80).pack(side=tk.LEFT)
+
         # Video list with scrollbar
-        list_frame = ttk.Frame(self.dialog)
+        list_frame = ctk.CTkFrame(self.dialog)
         list_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
-        
-        scrollbar = ttk.Scrollbar(list_frame)
+
+        scrollbar = ctk.CTkScrollbar(list_frame)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        
+
         self.video_listbox = tk.Listbox(list_frame, yscrollcommand=scrollbar.set,
-                                       selectmode=tk.MULTIPLE, height=15)
+                                       selectmode=tk.MULTIPLE, height=15,
+                                       font=('Arial', 12))
         self.video_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar.config(command=self.video_listbox.yview)
-        
+        scrollbar.configure(command=self.video_listbox.yview)
+
         # Populate listbox and pre-select videos if initial_selected_ids provided
         videos = self.playlist_info.get('videos', [])
         for idx, video in enumerate(videos):
@@ -94,13 +95,13 @@ class PlaylistSelector:
             self.select_all_var.set(True)
 
         # Button frame
-        button_frame = ttk.Frame(self.dialog)
+        button_frame = ctk.CTkFrame(self.dialog, fg_color="transparent")
         button_frame.pack(fill=tk.X, padx=10, pady=10)
         button_frame.columnconfigure(0, weight=1)
-        
-        ttk.Button(button_frame, text="✓ Download Selected",
+
+        ctk.CTkButton(button_frame, text="✓ Download Selected",
                   command=self._on_confirm).grid(row=0, column=0, sticky=tk.E, padx=(0, 5))
-        ttk.Button(button_frame, text="✗ Cancel",
+        ctk.CTkButton(button_frame, text="✗ Cancel",
                   command=self.dialog.destroy).grid(row=0, column=1, sticky=tk.E)
     
     def _toggle_select_all(self):

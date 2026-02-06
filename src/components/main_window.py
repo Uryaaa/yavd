@@ -1,7 +1,8 @@
 """Main application window"""
 
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox, scrolledtext
+from tkinter import filedialog, messagebox
+import customtkinter as ctk
 import os
 from pathlib import Path
 from io import BytesIO
@@ -10,10 +11,192 @@ import re
 from urllib.parse import urlparse
 
 try:
-    from PIL import Image, ImageTk
+    from PIL import Image
     PIL_AVAILABLE = True
 except ImportError:
     PIL_AVAILABLE = False
+
+class TimeEntry(ctk.CTkFrame):
+    """Custom time entry widget (HH:MM:SS) with up/down arrow support and backspace/del reset to 0."""
+
+    def __init__(self, master, width=120, state='normal', **kwargs):
+        super().__init__(master, fg_color="transparent")
+        self._time_var = tk.StringVar(value="00:00:00")
+        self._state = state
+        self._entry = ctk.CTkEntry(self, width=width, font=('Arial', 12),
+                                   textvariable=self._time_var, justify='center')
+        self._entry.pack(fill=tk.X)
+
+        # Bind events on the internal tk entry for reliable key handling
+        internal = self._entry._entry
+        internal.bind("<KeyPress>", self._on_key_press)
+        internal.bind("<Up>", self._on_arrow_up)
+        internal.bind("<Down>", self._on_arrow_down)
+
+        if state == 'disabled':
+            self._entry.configure(state='disabled')
+
+    def _get_cursor_segment(self):
+        """Return which segment (0=hours, 1=minutes, 2=seconds) the cursor is in."""
+        try:
+            pos = self._entry._entry.index(tk.INSERT)
+        except Exception:
+            pos = 0
+        if pos <= 2:
+            return 0
+        elif pos <= 5:
+            return 1
+        else:
+            return 2
+
+    def _parse_time(self):
+        """Parse current value into [h, m, s]."""
+        val = self._time_var.get()
+        try:
+            parts = val.split(':')
+            return [int(parts[0]), int(parts[1]), int(parts[2])]
+        except Exception:
+            return [0, 0, 0]
+
+    def _format_time(self, h, m, s):
+        """Format h, m, s into HH:MM:SS string."""
+        h = max(0, min(h, 99))
+        m = max(0, min(m, 59))
+        s = max(0, min(s, 59))
+        return f"{h:02d}:{m:02d}:{s:02d}"
+
+    def _set_time(self, h, m, s):
+        """Set the time value and restore cursor position."""
+        try:
+            pos = self._entry._entry.index(tk.INSERT)
+        except Exception:
+            pos = 0
+        self._time_var.set(self._format_time(h, m, s))
+        try:
+            self._entry._entry.icursor(pos)
+        except Exception:
+            pass
+
+    def _on_key_press(self, event):
+        """Handle key presses: digits replace at cursor, backspace/del reset to 0."""
+        if self._state == 'disabled':
+            return "break"
+
+        # Allow navigation keys
+        if event.keysym in ('Left', 'Right', 'Home', 'End', 'Tab', 'Shift_L', 'Shift_R'):
+            return None
+
+        # Up/Down handled separately
+        if event.keysym in ('Up', 'Down'):
+            return None
+
+        val = self._time_var.get()
+        try:
+            pos = self._entry._entry.index(tk.INSERT)
+        except Exception:
+            pos = 0
+
+        if event.keysym in ('BackSpace', 'Delete'):
+            # Reset digit at cursor position to 0
+            if event.keysym == 'BackSpace' and pos > 0:
+                target = pos - 1
+            else:
+                target = pos
+            # Skip colons
+            if target < len(val) and val[target] == ':':
+                return "break"
+            if 0 <= target < len(val) and val[target] != ':':
+                new_val = val[:target] + '0' + val[target + 1:]
+                self._time_var.set(new_val)
+                self._entry._entry.icursor(target if event.keysym == 'BackSpace' else target + 1)
+            return "break"
+
+        if event.char and event.char.isdigit():
+            # Skip colon positions
+            if pos < len(val) and val[pos] == ':':
+                pos += 1
+            if pos < len(val) and val[pos] != ':':
+                new_val = val[:pos] + event.char + val[pos + 1:]
+                # Validate segments
+                try:
+                    parts = new_val.split(':')
+                    h, m, s = int(parts[0]), int(parts[1]), int(parts[2])
+                    if m > 59 or s > 59 or h > 99:
+                        return "break"
+                except Exception:
+                    return "break"
+                self._time_var.set(new_val)
+                # Move cursor forward, skip colons
+                new_pos = pos + 1
+                if new_pos < len(new_val) and new_val[new_pos] == ':':
+                    new_pos += 1
+                self._entry._entry.icursor(new_pos)
+            return "break"
+
+        # Block all other input
+        return "break"
+
+    def _on_arrow_up(self, event):
+        """Increment the segment at cursor by 1."""
+        if self._state == 'disabled':
+            return "break"
+        seg = self._get_cursor_segment()
+        h, m, s = self._parse_time()
+        if seg == 0:
+            h = min(h + 1, 99)
+        elif seg == 1:
+            m = min(m + 1, 59)
+        else:
+            s = min(s + 1, 59)
+        self._set_time(h, m, s)
+        return "break"
+
+    def _on_arrow_down(self, event):
+        """Decrement the segment at cursor by 1."""
+        if self._state == 'disabled':
+            return "break"
+        seg = self._get_cursor_segment()
+        h, m, s = self._parse_time()
+        if seg == 0:
+            h = max(h - 1, 0)
+        elif seg == 1:
+            m = max(m - 1, 0)
+        else:
+            s = max(s - 1, 0)
+        self._set_time(h, m, s)
+        return "break"
+
+    def get(self):
+        """Get the current time string."""
+        return self._time_var.get().strip()
+
+    def delete(self, start, end):
+        """Reset to 00:00:00."""
+        self._time_var.set("00:00:00")
+
+    def insert(self, index, value):
+        """Set the time value (expects HH:MM:SS format)."""
+        # Validate and set
+        try:
+            parts = value.strip().split(':')
+            h, m, s = int(parts[0]), int(parts[1]), int(parts[2])
+            self._time_var.set(self._format_time(h, m, s))
+        except Exception:
+            self._time_var.set(value)
+
+    def configure(self, **kwargs):
+        """Configure the widget."""
+        if 'state' in kwargs:
+            self._state = kwargs['state']
+            self._entry.configure(state=kwargs['state'])
+            del kwargs['state']
+        if kwargs:
+            super().configure(**kwargs)
+
+    def select_range(self, start, end):
+        """Select a range of text."""
+        self._entry.select_range(start, end)
+
 
 from ..config import ConfigManager
 from ..downloader import Downloader
@@ -84,19 +267,33 @@ class MainWindow:
         self.cached_playlist_data = None
         self.selected_video_ids = set()  # Preserve selections when re-opening
 
+        # Install Tk error handler to suppress CTk widget resize errors
+        # (CTkRadioButton/CTkCheckBox inside CTkScrollableFrame can crash during rapid resize)
+        self._original_tk_report_callback_exception = self.root.report_callback_exception
+        self.root.report_callback_exception = self._handle_tk_error
+
         # Create UI
         self.create_widgets()
-        
+
         # Load saved yt-dlp path
         saved_path = self.config.get('yt_dlp_path', '')
         if saved_path:
             self.yt_dlp_entry.insert(0, saved_path)
 
+    def _handle_tk_error(self, exc_type, exc_value, exc_tb):
+        """Handle Tk callback exceptions, suppressing known CTk resize errors."""
+        import traceback
+        if exc_type is tk.TclError:
+            msg = str(exc_value)
+            if "invalid command name" in msg and ("ctkcanvas" in msg or "ctkradiobutton" in msg
+                                                   or "ctkcheckbox" in msg):
+                return  # Suppress known CTk widget resize errors
+        # For all other errors, use the original handler
+        self._original_tk_report_callback_exception(exc_type, exc_value, exc_tb)
+
     def _configure_styles(self):
         """Configure custom styles for the application"""
-        style = ttk.Style()
-
-        # Configure colors
+        # Configure colors (for reference, though customtkinter handles most styling)
         self.colors = {
             'primary': '#2196F3',      # Blue
             'success': '#4CAF50',      # Green
@@ -107,27 +304,11 @@ class MainWindow:
             'text_light': '#757575'    # Medium gray
         }
 
-        # Try to configure accent button style
-        try:
-            style.configure('Accent.TButton',
-                          font=('Arial', 10, 'bold'),
-                          padding=8)
-        except:
-            pass
-
-        # Configure label frames
-        try:
-            style.configure('TLabelframe.Label',
-                          font=('Arial', 9, 'bold'),
-                          foreground=self.colors['primary'])
-        except:
-            pass
-
     def create_widgets(self):
         """Create and layout all GUI widgets"""
         # Main container with minimal padding
-        main_frame = ttk.Frame(self.root, padding="5")
-        main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        main_frame = ctk.CTkFrame(self.root)
+        main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), padx=5, pady=5)
 
         # Configure grid weights for responsiveness
         self.root.columnconfigure(0, weight=1)
@@ -138,61 +319,16 @@ class MainWindow:
         # yt-dlp Path Section (always visible at top)
         self._create_ytdlp_section(main_frame)
 
-        # Create notebook (tabbed interface)
-        self.notebook = ttk.Notebook(main_frame)
-        self.notebook.grid(row=2, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(5, 0))
+        # Create tabview (tabbed interface)
+        self.tabview = ctk.CTkTabview(main_frame)
+        self.tabview.grid(row=2, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(5, 0))
 
-        # Create tabs with canvas for scrolling
-        # Download tab with scrollbar
-        self.download_canvas_frame = ttk.Frame(self.notebook)
-        self.notebook.add(self.download_canvas_frame, text="📥 Download")
-
-        self.download_canvas = tk.Canvas(self.download_canvas_frame, highlightthickness=0)
-        self.download_scrollbar = ttk.Scrollbar(self.download_canvas_frame, orient="vertical", command=self.download_canvas.yview)
-        self.download_tab = ttk.Frame(self.download_canvas, padding=(8, 8, 8, 8))
-
-        self.download_canvas.configure(yscrollcommand=self.download_scrollbar.set)
-        # Don't pack scrollbar yet - will show it when needed
-        self.download_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
-        # Configure canvas to anchor content at top
-        self.download_canvas_frame.grid_rowconfigure(0, weight=1)
-        self.download_canvas_frame.grid_columnconfigure(0, weight=1)
-
-        self.canvas_window = self.download_canvas.create_window((0, 0), window=self.download_tab, anchor=tk.NW)
-
-        # Update scroll region when content changes
-        def configure_scroll_region(event):
-            self.download_canvas.configure(scrollregion=self.download_canvas.bbox("all"))
-            self._check_scrollbar_needed()
-        self.download_tab.bind("<Configure>", configure_scroll_region)
-
-        # Bind mousewheel to canvas - only scroll if scrollbar is visible
-        def on_mousewheel(event):
-            if self.scrollbar_visible:
-                self.download_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
-        self.download_canvas.bind_all("<MouseWheel>", on_mousewheel)
-
-        # Make canvas window expand with canvas
-        def configure_canvas_width(event):
-            self.download_canvas.itemconfig(self.canvas_window, width=event.width)
-        self.download_canvas.bind("<Configure>", configure_canvas_width)
-
-        # Get yt-dlp tab
-        self.ytdlp_tab = ttk.Frame(self.notebook, padding="8")
-        self.notebook.add(self.ytdlp_tab, text="⚙️ Get yt-dlp")
-
-        # Get FFmpeg tab
-        self.ffmpeg_tab = ttk.Frame(self.notebook, padding="8")
-        self.notebook.add(self.ffmpeg_tab, text="🎬 Get FFmpeg")
-
-        # Templates tab
-        self.templates_tab = ttk.Frame(self.notebook, padding="5")
-        self.notebook.add(self.templates_tab, text="📋 Templates")
-
-        # Log tab
-        self.log_tab = ttk.Frame(self.notebook, padding="8")
-        self.notebook.add(self.log_tab, text="📄 Output Log")
+        # Create tabs
+        self.download_tab = self.tabview.add("📥 Download")
+        self.ytdlp_tab = self.tabview.add("⚙️ Get yt-dlp")
+        self.ffmpeg_tab = self.tabview.add("🎬 Get FFmpeg")
+        self.templates_tab = self.tabview.add("📋 Templates")
+        self.log_tab = self.tabview.add("📄 Output Log")
 
         # Configure tab weights
         self.download_tab.columnconfigure(0, weight=1)
@@ -202,7 +338,12 @@ class MainWindow:
         self.log_tab.columnconfigure(0, weight=1)
         self.log_tab.rowconfigure(0, weight=1)
 
-        # Track if scrollbar is shown
+        # Create scrollable frame for download tab
+        self.download_scrollable = ctk.CTkScrollableFrame(self.download_tab)
+        self.download_scrollable.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        self.download_scrollable.columnconfigure(0, weight=1)
+
+        # Track if scrollbar is shown (for compatibility)
         self.scrollbar_visible = False
 
         # Populate Download Tab
@@ -226,28 +367,28 @@ class MainWindow:
     def _create_download_tab_content(self):
         """Create content for download tab"""
         # Video URL Section
-        self._create_url_section(self.download_tab)
+        self._create_url_section(self.download_scrollable)
 
         # Video Metadata Section
-        self._create_metadata_section(self.download_tab)
+        self._create_metadata_section(self.download_scrollable)
 
         # Trim/Cut Section
-        self._create_trim_section(self.download_tab)
+        self._create_trim_section(self.download_scrollable)
 
         # Output Directory Section
-        self._create_output_section(self.download_tab)
+        self._create_output_section(self.download_scrollable)
 
         # Format Selection Section (Download Options)
-        self._create_format_section(self.download_tab)
+        self._create_format_section(self.download_scrollable)
 
         # Convert To Section (after Download Options)
-        self._create_convert_section(self.download_tab)
+        self._create_convert_section(self.download_scrollable)
 
         # Quality Selection Section
-        self._create_quality_section(self.download_tab)
+        self._create_quality_section(self.download_scrollable)
 
         # Download Button
-        self._create_download_button(self.download_tab)
+        self._create_download_button(self.download_scrollable)
 
     def _create_log_tab_content(self):
         """Create content for log tab"""
@@ -257,129 +398,138 @@ class MainWindow:
     def _create_ytdlp_tab_content(self):
         """Create content for Get yt-dlp tab"""
         # Title
-        ttk.Label(self.ytdlp_tab, text="Download yt-dlp Executable",
-                 font=('Arial', 11, 'bold')).grid(row=0, column=0, sticky=tk.W, pady=(0, 10))
+        ctk.CTkLabel(self.ytdlp_tab, text="Download yt-dlp Executable",
+                 font=('Arial', 14, 'bold')).grid(row=0, column=0, sticky=tk.W, pady=(0, 10))
 
         # Description
         desc_text = "Download the latest yt-dlp executable directly from GitHub.\nChoose between Stable, Nightly, or Master builds."
-        ttk.Label(self.ytdlp_tab, text=desc_text, font=('Arial', 9)).grid(
+        ctk.CTkLabel(self.ytdlp_tab, text=desc_text, font=('Arial', 12)).grid(
             row=1, column=0, sticky=tk.W, pady=(0, 15))
 
         # Version selection
-        version_frame = ttk.LabelFrame(self.ytdlp_tab, text="Select Version", padding="10")
-        version_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
+        version_frame = ctk.CTkFrame(self.ytdlp_tab)
+        version_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(0, 10), padx=10)
         version_frame.columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(version_frame, text="Select Version", font=('Arial', 13, 'bold')).grid(
+            row=0, column=0, sticky=tk.W, pady=(5, 5), padx=10)
 
         self.ytdlp_version_var = tk.StringVar(value="stable")
 
-        ttk.Radiobutton(version_frame, text="Stable - Recommended for most users",
+        ctk.CTkRadioButton(version_frame, text="Stable - Recommended for most users",
                        variable=self.ytdlp_version_var, value="stable").grid(
-            row=0, column=0, sticky=tk.W, pady=2)
+            row=1, column=0, sticky=tk.W, pady=2, padx=10)
 
-        ttk.Radiobutton(version_frame, text="Nightly - Latest features and fixes",
+        ctk.CTkRadioButton(version_frame, text="Nightly - Latest features and fixes",
                        variable=self.ytdlp_version_var, value="nightly").grid(
-            row=1, column=0, sticky=tk.W, pady=2)
+            row=2, column=0, sticky=tk.W, pady=2, padx=10)
 
-        ttk.Radiobutton(version_frame, text="Master - Bleeding edge (may be unstable)",
+        ctk.CTkRadioButton(version_frame, text="Master - Bleeding edge (may be unstable)",
                        variable=self.ytdlp_version_var, value="master").grid(
-            row=2, column=0, sticky=tk.W, pady=2)
+            row=3, column=0, sticky=tk.W, pady=(2, 10), padx=10)
 
         # Output location
-        location_frame = ttk.LabelFrame(self.ytdlp_tab, text="Save Location", padding="10")
-        location_frame.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
+        location_frame = ctk.CTkFrame(self.ytdlp_tab)
+        location_frame.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=(0, 10), padx=10)
         location_frame.columnconfigure(0, weight=1)
 
-        self.ytdlp_save_entry = ttk.Entry(location_frame, width=50)
-        self.ytdlp_save_entry.grid(row=0, column=0, sticky=(tk.W, tk.E), padx=(0, 5))
+        ctk.CTkLabel(location_frame, text="Save Location", font=('Arial', 13, 'bold')).grid(
+            row=0, column=0, columnspan=2, sticky=tk.W, pady=(5, 5), padx=10)
+
+        self.ytdlp_save_entry = ctk.CTkEntry(location_frame, width=50)
+        self.ytdlp_save_entry.grid(row=1, column=0, sticky=(tk.W, tk.E), padx=(10, 5), pady=(0, 10))
         default_path = str(Path.home() / "Downloads" / "yt-dlp.exe")
         self.ytdlp_save_entry.insert(0, default_path)
         # Add context menu
         ContextMenu(self.ytdlp_save_entry)
 
-        ttk.Button(location_frame, text="📁 Browse...",
-                  command=self._browse_ytdlp_save_location).grid(row=0, column=1)
+        ctk.CTkButton(location_frame, text="📁 Browse...",
+                  command=self._browse_ytdlp_save_location).grid(row=1, column=1, padx=(0, 10), pady=(0, 10))
 
         # Progress bar
-        self.ytdlp_progress_frame = ttk.Frame(self.ytdlp_tab)
+        self.ytdlp_progress_frame = ctk.CTkFrame(self.ytdlp_tab)
         self.ytdlp_progress_frame.grid(row=4, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
         self.ytdlp_progress_frame.columnconfigure(0, weight=1)
 
-        self.ytdlp_progress_label = ttk.Label(self.ytdlp_progress_frame, text="",
-                                             font=('Arial', 9))
+        self.ytdlp_progress_label = ctk.CTkLabel(self.ytdlp_progress_frame, text="",
+                                             font=('Arial', 12))
         self.ytdlp_progress_label.grid(row=0, column=0, sticky=tk.W, pady=(0, 5))
 
-        self.ytdlp_progress_bar = ttk.Progressbar(self.ytdlp_progress_frame,
-                                                  mode='determinate', length=400)
+        self.ytdlp_progress_bar = ctk.CTkProgressBar(self.ytdlp_progress_frame,
+                                                  mode='determinate')
         self.ytdlp_progress_bar.grid(row=1, column=0, sticky=(tk.W, tk.E))
+        self.ytdlp_progress_bar.set(0)
 
         # Initially hide progress
         self.ytdlp_progress_frame.grid_remove()
 
         # Download button
-        self.ytdlp_download_btn = ttk.Button(self.ytdlp_tab, text="📥 Download yt-dlp",
-                                            command=self._download_ytdlp,
-                                            style='Accent.TButton')
+        self.ytdlp_download_btn = ctk.CTkButton(self.ytdlp_tab, text="📥 Download yt-dlp",
+                                            command=self._download_ytdlp)
         self.ytdlp_download_btn.grid(row=5, column=0, pady=(0, 10), sticky=(tk.W, tk.E))
 
         # Info text
         info_text = ("After downloading, the path will be automatically set in the main tab.\n"
                     "You can also manually browse for an existing yt-dlp.exe file.")
-        ttk.Label(self.ytdlp_tab, text=info_text, font=('Arial', 8),
-                 foreground='gray').grid(row=6, column=0, sticky=tk.W)
+        ctk.CTkLabel(self.ytdlp_tab, text=info_text, font=('Arial', 11),
+                 text_color='gray').grid(row=6, column=0, sticky=tk.W)
 
     def _create_ffmpeg_tab_content(self):
         """Create content for Get FFmpeg tab"""
         # Title
-        ttk.Label(self.ffmpeg_tab, text="Download FFmpeg Executable",
-                 font=('Arial', 11, 'bold')).grid(row=0, column=0, sticky=tk.W, pady=(0, 10))
+        ctk.CTkLabel(self.ffmpeg_tab, text="Download FFmpeg Executable",
+                 font=('Arial', 14, 'bold')).grid(row=0, column=0, sticky=tk.W, pady=(0, 10))
 
         # Description
         desc_text = "Download the latest FFmpeg executable directly from GitHub.\nFFmpeg is required for advanced video processing."
-        ttk.Label(self.ffmpeg_tab, text=desc_text, font=('Arial', 9)).grid(
+        ctk.CTkLabel(self.ffmpeg_tab, text=desc_text, font=('Arial', 12)).grid(
             row=1, column=0, sticky=tk.W, pady=(0, 15))
 
         # Output location
-        location_frame = ttk.LabelFrame(self.ffmpeg_tab, text="Save Location", padding="10")
-        location_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
+        location_frame = ctk.CTkFrame(self.ffmpeg_tab)
+        location_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(0, 10), padx=10)
         location_frame.columnconfigure(0, weight=1)
 
-        self.ffmpeg_save_entry = ttk.Entry(location_frame, width=50)
-        self.ffmpeg_save_entry.grid(row=0, column=0, sticky=(tk.W, tk.E), padx=(0, 5))
+        ctk.CTkLabel(location_frame, text="Save Location", font=('Arial', 13, 'bold')).grid(
+            row=0, column=0, columnspan=2, sticky=tk.W, pady=(5, 5), padx=10)
+
+        self.ffmpeg_save_entry = ctk.CTkEntry(location_frame, width=50)
+        self.ffmpeg_save_entry.grid(row=1, column=0, sticky=(tk.W, tk.E), padx=(10, 5), pady=(0, 10))
         default_path = str(Path.home() / "Downloads" / "ffmpeg.exe")
         self.ffmpeg_save_entry.insert(0, default_path)
         # Add context menu
         ContextMenu(self.ffmpeg_save_entry)
 
-        ttk.Button(location_frame, text="📁 Browse...",
-                  command=self._browse_ffmpeg_save_location).grid(row=0, column=1)
+        ctk.CTkButton(location_frame, text="📁 Browse...",
+                  command=self._browse_ffmpeg_save_location).grid(row=1, column=1, padx=(0, 10), pady=(0, 10))
 
         # Progress bar
-        self.ffmpeg_progress_frame = ttk.Frame(self.ffmpeg_tab)
+        self.ffmpeg_progress_frame = ctk.CTkFrame(self.ffmpeg_tab)
         self.ffmpeg_progress_frame.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
         self.ffmpeg_progress_frame.columnconfigure(0, weight=1)
 
-        self.ffmpeg_progress_label = ttk.Label(self.ffmpeg_progress_frame, text="",
-                                              font=('Arial', 9))
+        self.ffmpeg_progress_label = ctk.CTkLabel(self.ffmpeg_progress_frame, text="",
+                                              font=('Arial', 12))
         self.ffmpeg_progress_label.grid(row=0, column=0, sticky=tk.W, pady=(0, 5))
 
-        self.ffmpeg_progress_bar = ttk.Progressbar(self.ffmpeg_progress_frame,
-                                                   mode='determinate', length=400)
+        self.ffmpeg_progress_bar = ctk.CTkProgressBar(self.ffmpeg_progress_frame,
+                                                   mode='determinate')
         self.ffmpeg_progress_bar.grid(row=1, column=0, sticky=(tk.W, tk.E))
+        self.ffmpeg_progress_bar.set(0)
 
         # Initially hide progress
         self.ffmpeg_progress_frame.grid_remove()
 
         # Download button
-        self.ffmpeg_download_btn = ttk.Button(self.ffmpeg_tab, text="📥 Download FFmpeg",
-                                             command=self._download_ffmpeg,
-                                             style='Accent.TButton')
+        self.ffmpeg_download_btn = ctk.CTkButton(self.ffmpeg_tab, text="📥 Download FFmpeg",
+                                             command=self._download_ffmpeg)
         self.ffmpeg_download_btn.grid(row=4, column=0, pady=(0, 10), sticky=(tk.W, tk.E))
 
         # Info text
         info_text = ("After downloading, you can use FFmpeg for advanced video processing.\n"
                     "If you already have FFmpeg, it will be automatically detected.")
-        ttk.Label(self.ffmpeg_tab, text=info_text, font=('Arial', 8),
-                 foreground='gray').grid(row=5, column=0, sticky=tk.W)
+        ctk.CTkLabel(self.ffmpeg_tab, text=info_text, font=('Arial', 11),
+                 text_color='gray').grid(row=5, column=0, sticky=tk.W)
 
     def _create_templates_tab_content(self):
         """Create content for Templates tab"""
@@ -387,214 +537,193 @@ class MainWindow:
         self.templates_tab.rowconfigure(2, weight=1)  # Make content frame expand
 
         # Title and description
-        header_frame = ttk.Frame(self.templates_tab)
+        header_frame = ctk.CTkFrame(self.templates_tab)
         header_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 1))
         header_frame.columnconfigure(0, weight=1)
 
-        ttk.Label(header_frame, text="Custom yt-dlp Command Templates",
-                 font=('Arial', 9, 'bold')).grid(row=0, column=0, sticky=tk.W)
+        ctk.CTkLabel(header_frame, text="Custom yt-dlp Command Templates",
+                 font=('Arial', 12, 'bold')).grid(row=0, column=0, sticky=tk.W)
 
-        ttk.Label(header_frame, text="Use preset templates or create your own custom yt-dlp commands.",
-                 font=('Arial', 8), foreground='gray').grid(row=1, column=0, sticky=tk.W, pady=(0, 0))
+        ctk.CTkLabel(header_frame, text="Use preset templates or create your own custom yt-dlp commands.",
+                 font=('Arial', 11), text_color='gray').grid(row=1, column=0, sticky=tk.W, pady=(0, 0))
 
-        # Separator
-        ttk.Separator(self.templates_tab, orient='horizontal').grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 3))
+        # Separator (using a frame as customtkinter doesn't have Separator)
+        separator = ctk.CTkFrame(self.templates_tab, height=2, fg_color="gray")
+        separator.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 3))
 
         # Main content area - two columns
-        content_frame = ttk.Frame(self.templates_tab)
+        content_frame = ctk.CTkFrame(self.templates_tab)
         content_frame.grid(row=2, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(0, 0))
         content_frame.columnconfigure(0, weight=3)  # Available Templates - 30%
         content_frame.columnconfigure(1, weight=7)  # Template Details - 70%
         content_frame.rowconfigure(0, weight=1)
 
         # LEFT COLUMN: Template list
-        list_frame = ttk.LabelFrame(content_frame, text="📋 Available Templates", padding="3")
+        list_frame = ctk.CTkFrame(content_frame)
         list_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), padx=(0, 3))
         list_frame.columnconfigure(0, weight=1)
-        list_frame.rowconfigure(0, weight=1)
+        list_frame.rowconfigure(1, weight=1)
+
+        ctk.CTkLabel(list_frame, text="📋 Available Templates", font=('Arial', 13, 'bold')).grid(
+            row=0, column=0, columnspan=2, sticky=tk.W, pady=(5, 5), padx=5)
 
         # Listbox with scrollbars
-        list_scroll_y = ttk.Scrollbar(list_frame, orient=tk.VERTICAL)
-        list_scroll_x = ttk.Scrollbar(list_frame, orient=tk.HORIZONTAL)
+        list_scroll_y = ctk.CTkScrollbar(list_frame, orientation="vertical")
+        list_scroll_x = ctk.CTkScrollbar(list_frame, orientation="horizontal")
         self.template_listbox = tk.Listbox(list_frame,
                                           yscrollcommand=list_scroll_y.set,
                                           xscrollcommand=list_scroll_x.set,
-                                          height=8, font=('Arial', 8), activestyle='dotbox')
-        list_scroll_y.config(command=self.template_listbox.yview)
-        list_scroll_x.config(command=self.template_listbox.xview)
+                                          height=8, font=('Arial', 11), activestyle='dotbox')
+        list_scroll_y.configure(command=self.template_listbox.yview)
+        list_scroll_x.configure(command=self.template_listbox.xview)
 
-        self.template_listbox.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
-        list_scroll_y.grid(row=0, column=1, sticky=(tk.N, tk.S))
-        list_scroll_x.grid(row=1, column=0, sticky=(tk.W, tk.E))
+        self.template_listbox.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), padx=(5, 0), pady=(0, 5))
+        list_scroll_y.grid(row=1, column=1, sticky=(tk.N, tk.S), pady=(0, 5))
+        list_scroll_x.grid(row=2, column=0, sticky=(tk.W, tk.E), padx=(5, 0), pady=(0, 5))
 
         self.template_listbox.bind('<<ListboxSelect>>', self._on_template_select)
 
         # RIGHT COLUMN: Template details and actions
-        right_column = ttk.Frame(content_frame)
+        right_column = ctk.CTkFrame(content_frame)
         right_column.grid(row=0, column=1, sticky=(tk.W, tk.E, tk.N, tk.S), padx=(3, 0))
         right_column.columnconfigure(0, weight=1)
         right_column.rowconfigure(0, weight=2)  # Details frame gets more space
-        right_column.rowconfigure(1, weight=1)  # Add frame gets less space
+        right_column.rowconfigure(1, weight=0)  # Action buttons - fixed height
+        right_column.rowconfigure(2, weight=1)  # Add frame gets less space
 
-        # Template details frame with canvas for scrolling
-        details_outer_frame = ttk.LabelFrame(right_column, text="📝 Template Details", padding="3")
+        # Template details frame with scrollable content
+        details_outer_frame = ctk.CTkFrame(right_column)
         details_outer_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(0, 3))
         details_outer_frame.columnconfigure(0, weight=1)
-        details_outer_frame.rowconfigure(0, weight=1)
+        details_outer_frame.rowconfigure(0, weight=0)  # Label row - no expand
+        details_outer_frame.rowconfigure(1, weight=1)  # Scrollable content - expand
 
-        # Create canvas and scrollbar for details
-        details_canvas = tk.Canvas(details_outer_frame, highlightthickness=0)
-        details_scrollbar = ttk.Scrollbar(details_outer_frame, orient="vertical", command=details_canvas.yview)
-        details_frame = ttk.Frame(details_canvas)
+        ctk.CTkLabel(details_outer_frame, text="📝 Template Details", font=('Arial', 13, 'bold')).grid(
+            row=0, column=0, sticky=tk.W, pady=(5, 5), padx=5)
 
-        details_canvas.configure(yscrollcommand=details_scrollbar.set)
-
-        details_canvas_window = details_canvas.create_window((0, 0), window=details_frame, anchor=tk.NW)
-
-        # Update scroll region and scrollbar visibility
-        def update_scrollbar_visibility():
-            details_canvas.configure(scrollregion=details_canvas.bbox("all"))
-            # Show scrollbar only if needed
-            canvas_height = details_canvas.winfo_height()
-            content_height = details_frame.winfo_reqheight()
-            if content_height > canvas_height and canvas_height > 1:
-                details_scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
-            else:
-                details_scrollbar.grid_remove()
-
-        def configure_details_scroll(event):
-            update_scrollbar_visibility()
-
-        details_frame.bind("<Configure>", configure_details_scroll)
-
-        # Make canvas window expand with canvas and update scrollbar
-        def configure_details_canvas_width(event):
-            details_canvas.itemconfig(details_canvas_window, width=event.width)
-            update_scrollbar_visibility()
-
-        details_canvas.bind("<Configure>", configure_details_canvas_width)
-
-        details_canvas.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
-
+        # Use CTkScrollableFrame instead of raw tk.Canvas
+        details_frame = ctk.CTkScrollableFrame(details_outer_frame)
+        details_frame.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), padx=5, pady=(0, 5))
         details_frame.columnconfigure(0, weight=1)
 
         # Name
-        ttk.Label(details_frame, text="Name:", font=('Arial', 8, 'bold')).grid(
+        ctk.CTkLabel(details_frame, text="Name:", font=('Arial', 11, 'bold')).grid(
             row=0, column=0, sticky=tk.W, pady=(0, 0))
-        self.template_name_label = ttk.Label(details_frame, text="Select a template to view details",
-                                            font=('Arial', 8), foreground='gray')
+        self.template_name_label = ctk.CTkLabel(details_frame, text="Select a template to view details",
+                                            font=('Arial', 11), text_color='gray')
         self.template_name_label.grid(row=1, column=0, sticky=tk.W, pady=(0, 2))
 
         # Description
-        ttk.Label(details_frame, text="Description:", font=('Arial', 8, 'bold')).grid(
+        ctk.CTkLabel(details_frame, text="Description:", font=('Arial', 11, 'bold')).grid(
             row=2, column=0, sticky=tk.W, pady=(0, 0))
-        self.template_desc_label = ttk.Label(details_frame, text="",
-                                            font=('Arial', 8), wraplength=400, justify=tk.LEFT)
+        self.template_desc_label = ctk.CTkLabel(details_frame, text="",
+                                            font=('Arial', 11), wraplength=400, justify=tk.LEFT)
         self.template_desc_label.grid(row=3, column=0, sticky=tk.W, pady=(0, 2))
 
         # Command
-        ttk.Label(details_frame, text="Command:", font=('Arial', 8, 'bold')).grid(
+        ctk.CTkLabel(details_frame, text="Command:", font=('Arial', 11, 'bold')).grid(
             row=4, column=0, sticky=tk.W, pady=(0, 0))
 
-        cmd_frame = ttk.Frame(details_frame)
+        cmd_frame = ctk.CTkFrame(details_frame)
         cmd_frame.grid(row=5, column=0, sticky=(tk.W, tk.E), pady=(0, 2))
         cmd_frame.columnconfigure(0, weight=1)
 
         self.template_cmd_text = tk.Text(cmd_frame, height=2, wrap=tk.WORD,
-                                        font=('Consolas', 8), padx=4, pady=3,
+                                        font=('Consolas', 11), padx=4, pady=3,
                                         relief=tk.SOLID, borderwidth=1)
         self.template_cmd_text.grid(row=0, column=0, sticky=(tk.W, tk.E))
         # Add context menu (read-only mode)
         ContextMenu(self.template_cmd_text, read_only=True)
 
-        # Action buttons
-        btn_frame = ttk.Frame(details_frame)
-        btn_frame.grid(row=6, column=0, sticky=(tk.W, tk.E), pady=(2, 0))
+        # Action buttons (outside canvas, in right_column directly)
+        btn_frame = ctk.CTkFrame(right_column)
+        btn_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(3, 3))
         btn_frame.columnconfigure(0, weight=1)
         btn_frame.columnconfigure(1, weight=1)
 
-        self.template_use_btn = ttk.Button(btn_frame, text="✓ Use Template",
-                                          command=self._use_template, state='disabled',
-                                          style='Accent.TButton')
-        self.template_use_btn.grid(row=0, column=0, padx=(0, 3), sticky=(tk.W, tk.E, tk.N, tk.S))
+        self.template_use_btn = ctk.CTkButton(btn_frame, text="✓ Use Template",
+                                          command=self._use_template, state='disabled')
+        self.template_use_btn.grid(row=0, column=0, padx=(5, 3), pady=5, sticky=(tk.W, tk.E))
 
-        self.template_delete_btn = ttk.Button(btn_frame, text="🗑️ Delete",
+        self.template_delete_btn = ctk.CTkButton(btn_frame, text="🗑️ Delete",
                                              command=self._delete_template, state='disabled')
-        self.template_delete_btn.grid(row=0, column=1, padx=(3, 0), sticky=(tk.W, tk.E, tk.N, tk.S))
+        self.template_delete_btn.grid(row=0, column=1, padx=(3, 5), pady=5, sticky=(tk.W, tk.E))
 
         # Add custom template section
-        add_frame = ttk.LabelFrame(right_column, text="➕ Add Custom Template", padding="3")
-        add_frame.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N))
+        add_frame = ctk.CTkFrame(right_column)
+        add_frame.grid(row=2, column=0, sticky=(tk.W, tk.E, tk.N))
         add_frame.columnconfigure(1, weight=1)
 
+        ctk.CTkLabel(add_frame, text="➕ Add Custom Template", font=('Arial', 13, 'bold')).grid(
+            row=0, column=0, columnspan=2, sticky=tk.W, pady=(5, 5), padx=5)
+
         # Name field
-        ttk.Label(add_frame, text="Name:", font=('Arial', 8)).grid(
-            row=0, column=0, sticky=tk.W, padx=(0, 8), pady=(0, 2))
-        self.new_template_name = ttk.Entry(add_frame, font=('Arial', 8))
-        self.new_template_name.grid(row=0, column=1, sticky=(tk.W, tk.E), pady=(0, 2))
+        ctk.CTkLabel(add_frame, text="Name:", font=('Arial', 11)).grid(
+            row=1, column=0, sticky=tk.W, padx=(5, 8), pady=(0, 2))
+        self.new_template_name = ctk.CTkEntry(add_frame, font=('Arial', 11))
+        self.new_template_name.grid(row=1, column=1, sticky=(tk.W, tk.E), pady=(0, 2), padx=(0, 5))
         # Add context menu
         ContextMenu(self.new_template_name)
 
         # Description field
-        ttk.Label(add_frame, text="Description:", font=('Arial', 8)).grid(
-            row=1, column=0, sticky=tk.W, padx=(0, 8), pady=(0, 2))
-        self.new_template_desc = ttk.Entry(add_frame, font=('Arial', 8))
-        self.new_template_desc.grid(row=1, column=1, sticky=(tk.W, tk.E), pady=(0, 2))
+        ctk.CTkLabel(add_frame, text="Description:", font=('Arial', 11)).grid(
+            row=2, column=0, sticky=tk.W, padx=(5, 8), pady=(0, 2))
+        self.new_template_desc = ctk.CTkEntry(add_frame, font=('Arial', 11))
+        self.new_template_desc.grid(row=2, column=1, sticky=(tk.W, tk.E), pady=(0, 2), padx=(0, 5))
         # Add context menu
         ContextMenu(self.new_template_desc)
 
         # Command field
-        ttk.Label(add_frame, text="Command:", font=('Arial', 8)).grid(
-            row=2, column=0, sticky=(tk.W, tk.N), padx=(0, 8), pady=(0, 2))
+        ctk.CTkLabel(add_frame, text="Command:", font=('Arial', 11)).grid(
+            row=3, column=0, sticky=(tk.W, tk.N), padx=(5, 8), pady=(0, 2))
 
-        cmd_input_frame = ttk.Frame(add_frame)
-        cmd_input_frame.grid(row=2, column=1, sticky=(tk.W, tk.E), pady=(0, 2))
+        cmd_input_frame = ctk.CTkFrame(add_frame)
+        cmd_input_frame.grid(row=3, column=1, sticky=(tk.W, tk.E), pady=(0, 2), padx=(0, 5))
         cmd_input_frame.columnconfigure(0, weight=1)
 
         self.new_template_cmd = tk.Text(cmd_input_frame, height=2, wrap=tk.WORD,
-                                       font=('Consolas', 8), padx=4, pady=3,
+                                       font=('Consolas', 11), padx=4, pady=3,
                                        relief=tk.SOLID, borderwidth=1)
         self.new_template_cmd.grid(row=0, column=0, sticky=(tk.W, tk.E))
         # Add context menu
         ContextMenu(self.new_template_cmd)
 
         # Add button
-        add_btn_frame = ttk.Frame(add_frame)
-        add_btn_frame.grid(row=3, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(1, 0))
+        add_btn_frame = ctk.CTkFrame(add_frame)
+        add_btn_frame.grid(row=4, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(5, 5))
 
-        ttk.Button(add_btn_frame, text="➕ Add Template", command=self._add_custom_template,
-                  style='Accent.TButton').pack(side=tk.RIGHT)
+        ctk.CTkButton(add_btn_frame, text="➕ Add Template", command=self._add_custom_template).pack(side=tk.RIGHT, padx=5)
 
         # Load templates
         self._refresh_template_list()
     
     def _create_ytdlp_section(self, parent):
         """Create yt-dlp executable path selection section"""
-        ytdlp_label = ttk.Label(parent, text="yt-dlp Executable:", font=('Arial', 9, 'bold'))
+        ytdlp_label = ctk.CTkLabel(parent, text="yt-dlp Executable:", font=('Arial', 12, 'bold'))
         ytdlp_label.grid(row=0, column=0, sticky=tk.W, pady=(0, 2))
 
-        path_frame = ttk.Frame(parent)
+        path_frame = ctk.CTkFrame(parent)
         path_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 8))
         path_frame.columnconfigure(0, weight=1)
 
-        self.yt_dlp_entry = ttk.Entry(path_frame, width=50)
+        self.yt_dlp_entry = ctk.CTkEntry(path_frame, width=50)
         self.yt_dlp_entry.grid(row=0, column=0, sticky=(tk.W, tk.E), padx=(0, 3))
         # Add context menu
         ContextMenu(self.yt_dlp_entry)
 
-        self.yt_dlp_browse_btn = ttk.Button(path_frame, text="📁 Browse...", command=self.browse_yt_dlp)
+        self.yt_dlp_browse_btn = ctk.CTkButton(path_frame, text="📁 Browse...", command=self.browse_yt_dlp)
         self.yt_dlp_browse_btn.grid(row=0, column=1, sticky=tk.W)
 
     def _create_url_section(self, parent):
         """Create video URL input section"""
-        ttk.Label(parent, text="🔗 Video URL:", font=('Arial', 9, 'bold')).grid(
+        ctk.CTkLabel(parent, text="🔗 Video URL:", font=('Arial', 12, 'bold')).grid(
             row=0, column=0, sticky=tk.W, pady=(0, 2))
 
-        url_frame = ttk.Frame(parent)
+        url_frame = ctk.CTkFrame(parent)
         url_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 8))
         url_frame.columnconfigure(0, weight=1)
 
-        self.url_entry = ttk.Entry(url_frame, width=50, font=('Arial', 9))
+        self.url_entry = ctk.CTkEntry(url_frame, width=50, font=('Arial', 12))
         self.url_entry.grid(row=0, column=0, sticky=(tk.W, tk.E), padx=(0, 3))
         # Bind events for auto-fetch
         self.url_entry.bind('<KeyRelease>', self._on_url_changed)
@@ -603,10 +732,10 @@ class MainWindow:
         # Add context menu with paste callback for auto-fetch
         ContextMenu(self.url_entry, on_paste_callback=self._on_url_changed)
 
-        paste_btn = ttk.Button(url_frame, text="📋 Paste", command=self.paste_url)
+        paste_btn = ctk.CTkButton(url_frame, text="📋 Paste", command=self.paste_url)
         paste_btn.grid(row=0, column=1, padx=(0, 3))
 
-        fetch_btn = ttk.Button(url_frame, text="ℹ️ Fetch Info", command=self.fetch_video_info)
+        fetch_btn = ctk.CTkButton(url_frame, text="ℹ️ Fetch Info", command=self.fetch_video_info)
         fetch_btn.grid(row=0, column=2)
 
         # Store fetch button for later reference
@@ -616,11 +745,11 @@ class MainWindow:
         self.auto_fetch_timer = None
 
         # Instruction label
-        instruction_label = ttk.Label(
+        instruction_label = ctk.CTkLabel(
             parent,
             text="💡 Tip: Paste a video URL - it will auto-fetch info automatically. If auto-fetch doesn't work, click 'Fetch Info' to manually fetch available formats, resolutions, and framerates",
-            font=('Arial', 7),
-            foreground='gray',
+            font=('Arial', 10),
+            text_color='gray',
             wraplength=400,
             justify=tk.LEFT
         )
@@ -629,49 +758,54 @@ class MainWindow:
     def _create_metadata_section(self, parent):
         """Create video metadata display section"""
         # Metadata frame (initially hidden)
-        self.metadata_frame = ttk.LabelFrame(parent, text="Video Information", padding="3")
+        self.metadata_frame = ctk.CTkFrame(parent)
         self.metadata_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(0, 5))
         self.metadata_frame.columnconfigure(1, weight=1)
+        self.metadata_frame.rowconfigure(0, weight=0)
+
+        # Add label for the frame
+        ctk.CTkLabel(self.metadata_frame, text="Video Information", font=('Arial', 13, 'bold')).grid(
+            row=0, column=0, columnspan=2, sticky=tk.W, pady=(5, 5), padx=5)
 
         # Thumbnail (left side)
-        self.thumbnail_label = ttk.Label(self.metadata_frame)
-        self.thumbnail_label.grid(row=0, column=0, rowspan=4, sticky=tk.NW, padx=(0, 5))
+        self.thumbnail_label = ctk.CTkLabel(self.metadata_frame, text="")
+        self.thumbnail_label.grid(row=1, column=0, rowspan=4, sticky=tk.NW, padx=(5, 5), pady=(0, 5))
 
         # Info container (right side)
-        info_frame = ttk.Frame(self.metadata_frame)
-        info_frame.grid(row=0, column=1, sticky=(tk.W, tk.E, tk.N), rowspan=4)
+        info_frame = ctk.CTkFrame(self.metadata_frame)
+        info_frame.grid(row=1, column=1, sticky=(tk.W, tk.E, tk.N), rowspan=4, pady=(0, 5), padx=(0, 5))
         info_frame.columnconfigure(0, weight=1)
 
         # Title
-        title_frame = ttk.Frame(info_frame)
+        title_frame = ctk.CTkFrame(info_frame)
         title_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 1))
         title_frame.columnconfigure(1, weight=1)
-        ttk.Label(title_frame, text="Title:", font=('Arial', 8, 'bold')).grid(row=0, column=0, sticky=tk.W)
-        self.metadata_title = ttk.Label(title_frame, text="", wraplength=400, font=('Arial', 8))
+        ctk.CTkLabel(title_frame, text="Title:", font=('Arial', 11, 'bold')).grid(row=0, column=0, sticky=tk.W)
+        self.metadata_title = ctk.CTkLabel(title_frame, text="", wraplength=400, font=('Arial', 11))
         self.metadata_title.grid(row=0, column=1, sticky=tk.W, padx=(3, 0))
 
         # Duration
-        duration_frame = ttk.Frame(info_frame)
+        duration_frame = ctk.CTkFrame(info_frame)
         duration_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 1))
         duration_frame.columnconfigure(1, weight=1)
-        ttk.Label(duration_frame, text="Duration:", font=('Arial', 8, 'bold')).grid(row=0, column=0, sticky=tk.W)
-        self.metadata_duration = ttk.Label(duration_frame, text="", font=('Arial', 8))
+        ctk.CTkLabel(duration_frame, text="Duration:", font=('Arial', 11, 'bold')).grid(row=0, column=0, sticky=tk.W)
+        self.metadata_duration = ctk.CTkLabel(duration_frame, text="", font=('Arial', 11))
         self.metadata_duration.grid(row=0, column=1, sticky=tk.W, padx=(3, 0))
 
         # Uploader
-        uploader_frame = ttk.Frame(info_frame)
+        uploader_frame = ctk.CTkFrame(info_frame)
         uploader_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(0, 1))
         uploader_frame.columnconfigure(1, weight=1)
-        ttk.Label(uploader_frame, text="Uploader:", font=('Arial', 8, 'bold')).grid(row=0, column=0, sticky=tk.W)
-        self.metadata_uploader = ttk.Label(uploader_frame, text="", font=('Arial', 8))
+        ctk.CTkLabel(uploader_frame, text="Uploader:", font=('Arial', 11, 'bold')).grid(row=0, column=0, sticky=tk.W)
+        self.metadata_uploader = ctk.CTkLabel(uploader_frame, text="", font=('Arial', 11))
         self.metadata_uploader.grid(row=0, column=1, sticky=tk.W, padx=(3, 0))
 
         # Views
-        views_frame = ttk.Frame(info_frame)
+        views_frame = ctk.CTkFrame(info_frame)
         views_frame.grid(row=3, column=0, sticky=(tk.W, tk.E))
         views_frame.columnconfigure(1, weight=1)
-        ttk.Label(views_frame, text="Views:", font=('Arial', 8, 'bold')).grid(row=0, column=0, sticky=tk.W)
-        self.metadata_views = ttk.Label(views_frame, text="", font=('Arial', 8))
+        ctk.CTkLabel(views_frame, text="Views:", font=('Arial', 11, 'bold')).grid(row=0, column=0, sticky=tk.W)
+        self.metadata_views = ctk.CTkLabel(views_frame, text="", font=('Arial', 11))
         self.metadata_views.grid(row=0, column=1, sticky=tk.W, padx=(3, 0))
 
         # Hide metadata frame initially
@@ -679,45 +813,41 @@ class MainWindow:
 
     def _create_trim_section(self, parent):
         """Create trim/cut controls section"""
-        # Trim frame (initially hidden)
-        self.trim_frame = ttk.LabelFrame(parent, text="Trim Video (Optional)", padding="3")
-        self.trim_frame.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=(0, 5))
-        self.trim_frame.columnconfigure(0, weight=0)
+        # Trim frame (initially hidden) - fixed size, don't expand
+        self.trim_frame = ctk.CTkFrame(parent)
+        self.trim_frame.grid(row=3, column=0, sticky=tk.W, pady=(0, 5))
+
+        ctk.CTkLabel(self.trim_frame, text="✂️ Trim Video", font=('Arial', 13, 'bold')).grid(
+            row=0, column=0, sticky=tk.W, pady=(5, 5), padx=5)
 
         # Enable trim checkbox
         self.trim_enabled = tk.BooleanVar(value=False)
-        ttk.Checkbutton(self.trim_frame, text="Enable trimming",
+        ctk.CTkCheckBox(self.trim_frame, text="Enable trimming",
                        variable=self.trim_enabled,
                        command=self._toggle_trim_controls).grid(
-            row=0, column=0, sticky=tk.W, pady=(0, 2))
+            row=1, column=0, sticky=tk.W, pady=(0, 5), padx=5)
 
-        # Time inputs frame (Start and End on same line)
-        time_frame = ttk.Frame(self.trim_frame)
-        time_frame.grid(row=1, column=0, sticky=tk.W)
+        # Time inputs frame (Start and End on same line) - fixed size
+        time_frame = ctk.CTkFrame(self.trim_frame)
+        time_frame.grid(row=2, column=0, sticky=tk.W, padx=5, pady=(0, 5))
 
         # Start time
-        ttk.Label(time_frame, text="Start:", font=('Arial', 8)).grid(
-            row=0, column=0, sticky=tk.W, padx=(0, 3))
-        self.trim_start_entry = ttk.Entry(time_frame, width=12, state='disabled')
-        self.trim_start_entry.grid(row=0, column=1, sticky=tk.W, padx=(0, 8))
-        self.trim_start_entry.insert(0, "00:00:00")
-        # Add context menu
-        ContextMenu(self.trim_start_entry)
+        ctk.CTkLabel(time_frame, text="Start:", font=('Arial', 11)).grid(
+            row=0, column=0, sticky=tk.W, padx=(5, 3), pady=5)
+        self.trim_start_entry = TimeEntry(time_frame, width=120, state='disabled')
+        self.trim_start_entry.grid(row=0, column=1, sticky=tk.W, padx=(0, 10), pady=5)
 
         # End time
-        ttk.Label(time_frame, text="End:", font=('Arial', 8)).grid(
-            row=0, column=2, sticky=tk.W, padx=(0, 3))
-        self.trim_end_entry = ttk.Entry(time_frame, width=12, state='disabled')
-        self.trim_end_entry.grid(row=0, column=3, sticky=tk.W)
-        self.trim_end_entry.insert(0, "00:00:00")
-        # Add context menu
-        ContextMenu(self.trim_end_entry)
+        ctk.CTkLabel(time_frame, text="End:", font=('Arial', 11)).grid(
+            row=0, column=2, sticky=tk.W, padx=(5, 3), pady=5)
+        self.trim_end_entry = TimeEntry(time_frame, width=120, state='disabled')
+        self.trim_end_entry.grid(row=0, column=3, sticky=tk.W, padx=(0, 5), pady=5)
 
         # Help text
-        help_text = ttk.Label(self.trim_frame,
-                             text="Format: HH:MM:SS",
-                             font=('Arial', 7), foreground='gray')
-        help_text.grid(row=2, column=0, sticky=tk.W, pady=(2, 0))
+        help_text = ctk.CTkLabel(self.trim_frame,
+                             text="Format: HH:MM:SS  |  ↑↓ to adjust  |  Del/Backspace resets digit to 0",
+                             font=('Arial', 10), text_color='gray')
+        help_text.grid(row=3, column=0, sticky=tk.W, pady=(2, 5), padx=5)
 
         # Hide trim frame initially
         self.trim_frame.grid_remove()
@@ -725,20 +855,23 @@ class MainWindow:
     def _create_convert_section(self, parent):
         """Create convert to format section"""
         # Convert frame (initially hidden)
-        self.convert_frame = ttk.LabelFrame(parent, text="Convert To (Optional)", padding="3")
+        self.convert_frame = ctk.CTkFrame(parent)
         self.convert_frame.grid(row=7, column=0, sticky=(tk.W, tk.E), pady=(0, 5))
         self.convert_frame.columnconfigure(0, weight=0)
 
+        ctk.CTkLabel(self.convert_frame, text="🔄 Remux", font=('Arial', 13, 'bold')).grid(
+            row=0, column=0, sticky=tk.W, pady=(5, 5), padx=5)
+
         # Enable convert checkbox
         self.convert_enabled = tk.BooleanVar(value=False)
-        ttk.Checkbutton(self.convert_frame, text="Enable conversion",
+        ctk.CTkCheckBox(self.convert_frame, text="Enable remuxing",
                        variable=self.convert_enabled,
                        command=self._toggle_convert_controls).grid(
-            row=0, column=0, sticky=tk.W, pady=(0, 2))
+            row=1, column=0, sticky=tk.W, pady=(0, 5), padx=5)
 
         # Format buttons frame
-        self.convert_format_frame = ttk.Frame(self.convert_frame)
-        self.convert_format_frame.grid(row=1, column=0, sticky=tk.W)
+        self.convert_format_frame = ctk.CTkFrame(self.convert_frame)
+        self.convert_format_frame.grid(row=2, column=0, sticky=tk.W, padx=5, pady=(0, 5))
 
         # Convert format variable
         self.convert_format_var = tk.StringVar(value="mp4")
@@ -752,10 +885,10 @@ class MainWindow:
         self._update_convert_format_options()
 
         # Help text
-        help_text = ttk.Label(self.convert_frame,
+        help_text = ctk.CTkLabel(self.convert_frame,
                              text="Convert downloaded file to selected format using ffmpeg",
-                             font=('Arial', 7), foreground='gray')
-        help_text.grid(row=2, column=0, sticky=tk.W, pady=(2, 0))
+                             font=('Arial', 10), text_color='gray')
+        help_text.grid(row=3, column=0, sticky=tk.W, pady=(2, 0), padx=5)
 
         # Hide convert frame initially
         self.convert_frame.grid_remove()
@@ -771,9 +904,12 @@ class MainWindow:
 
     def _update_convert_format_options(self):
         """Update convert format options based on current mode"""
-        # Clear existing buttons
+        # Clear existing buttons safely (may fail during rapid resize)
         for child in self.convert_format_frame.winfo_children():
-            child.destroy()
+            try:
+                child.destroy()
+            except Exception:
+                pass
 
         mode = self.mode_var.get() if hasattr(self, 'mode_var') else 'auto'
 
@@ -786,7 +922,7 @@ class MainWindow:
         # Create radio buttons
         for idx, fmt in enumerate(formats):
             state = 'normal' if self.convert_enabled.get() else 'disabled'
-            radio = ttk.Radiobutton(
+            radio = ctk.CTkRadioButton(
                 self.convert_format_frame,
                 text=fmt.upper(),
                 value=fmt,
@@ -801,52 +937,55 @@ class MainWindow:
 
     def _create_output_section(self, parent):
         """Create output directory selection section"""
-        ttk.Label(parent, text="📂 Output Directory:", font=('Arial', 9, 'bold')).grid(
+        ctk.CTkLabel(parent, text="📂 Output Directory:", font=('Arial', 12, 'bold')).grid(
             row=4, column=0, sticky=tk.W, pady=(0, 2))
 
-        output_frame = ttk.Frame(parent)
+        output_frame = ctk.CTkFrame(parent)
         output_frame.grid(row=5, column=0, sticky=(tk.W, tk.E), pady=(0, 8))
         output_frame.columnconfigure(0, weight=1)
 
-        self.output_entry = ttk.Entry(output_frame, width=50, font=('Arial', 9))
+        self.output_entry = ctk.CTkEntry(output_frame, width=50, font=('Arial', 12))
         self.output_entry.grid(row=0, column=0, sticky=(tk.W, tk.E), padx=(0, 3))
         self.output_entry.insert(0, str(Path.home() / "Downloads"))
         # Add context menu
         ContextMenu(self.output_entry)
 
-        browse_btn = ttk.Button(output_frame, text="📁 Browse...", command=self.browse_output)
+        browse_btn = ctk.CTkButton(output_frame, text="📁 Browse...", command=self.browse_output)
         browse_btn.grid(row=0, column=1)
 
     def _create_format_section(self, parent):
         """Create format selection section"""
         # Label frame for format and mode selection
-        self.format_label_frame = ttk.LabelFrame(parent, text="🎬 Download Options", padding="3")
+        self.format_label_frame = ctk.CTkFrame(parent)
         self.format_label_frame.grid(row=6, column=0, sticky=(tk.W, tk.E), pady=(0, 8))
         self.format_label_frame.columnconfigure(0, weight=1)
 
-        # Mode selection (Video Only, Audio Only, Auto)
-        mode_frame = ttk.Frame(self.format_label_frame)
-        mode_frame.grid(row=0, column=0, sticky=tk.W, pady=(0, 5))
+        ctk.CTkLabel(self.format_label_frame, text="🎬 Download Options", font=('Arial', 13, 'bold')).grid(
+            row=0, column=0, sticky=tk.W, pady=(5, 5), padx=5)
 
-        ttk.Label(mode_frame, text="Mode:", font=('Arial', 8, 'bold')).pack(side=tk.LEFT, padx=(0, 8))
+        # Mode selection (Video Only, Audio Only, Auto)
+        mode_frame = ctk.CTkFrame(self.format_label_frame)
+        mode_frame.grid(row=1, column=0, sticky=tk.W, pady=(0, 5), padx=5)
+
+        ctk.CTkLabel(mode_frame, text="Mode:", font=('Arial', 11, 'bold')).pack(side=tk.LEFT, padx=(0, 8))
 
         self.mode_var = tk.StringVar(value="auto")
-        ttk.Radiobutton(mode_frame, text="🎥 Video Only (muted)", variable=self.mode_var,
+        ctk.CTkRadioButton(mode_frame, text="🎥 Video", variable=self.mode_var,
                        value="video", command=self._on_mode_changed).pack(side=tk.LEFT, padx=(0, 10))
-        ttk.Radiobutton(mode_frame, text="🎵 Audio Only", variable=self.mode_var,
+        ctk.CTkRadioButton(mode_frame, text="🎵 Audio Only", variable=self.mode_var,
                        value="audio", command=self._on_mode_changed).pack(side=tk.LEFT, padx=(0, 10))
-        ttk.Radiobutton(mode_frame, text="⚙️ Auto", variable=self.mode_var,
+        ctk.CTkRadioButton(mode_frame, text="⚙️ Auto", variable=self.mode_var,
                        value="auto", command=self._on_mode_changed).pack(side=tk.LEFT)
 
         # Format selection
-        format_frame = ttk.Frame(self.format_label_frame)
-        format_frame.grid(row=1, column=0, sticky=tk.W, pady=(0, 5))
+        format_frame = ctk.CTkFrame(self.format_label_frame)
+        format_frame.grid(row=2, column=0, sticky=tk.W, pady=(0, 5), padx=5)
 
-        ttk.Label(format_frame, text="Format:", font=('Arial', 8, 'bold')).pack(side=tk.LEFT, padx=(0, 8))
+        ctk.CTkLabel(format_frame, text="Format:", font=('Arial', 11, 'bold')).pack(side=tk.LEFT, padx=(0, 8))
 
         self.format_var = tk.StringVar(value="mp4")
         self.format_radios = []
-        self.format_radio_frame = ttk.Frame(format_frame)
+        self.format_radio_frame = ctk.CTkFrame(format_frame)
         self.format_radio_frame.pack(side=tk.LEFT)
         self._update_format_options(['MP4', 'MP3'])
 
@@ -855,31 +994,32 @@ class MainWindow:
 
     def _create_quality_section(self, parent):
         """Create quality selection section"""
-        self.quality_label_frame = ttk.LabelFrame(parent, text="⭐ Quality & Resolution", padding="3")
+        self.quality_label_frame = ctk.CTkFrame(parent)
         self.quality_label_frame.grid(row=8, column=0, sticky=(tk.W, tk.E), pady=(0, 8))
         self.quality_label_frame.columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(self.quality_label_frame, text="⭐ Quality & Resolution", font=('Arial', 13, 'bold')).grid(
+            row=0, column=0, sticky=tk.W, pady=(5, 5), padx=5)
 
         self.quality_var = tk.StringVar(value="best")
 
         # Quality combobox
-        ttk.Label(self.quality_label_frame, text="Resolution:", font=('Arial', 8, 'bold')).grid(
-            row=0, column=0, sticky=tk.W, pady=(0, 3))
+        ctk.CTkLabel(self.quality_label_frame, text="Resolution:", font=('Arial', 11, 'bold')).grid(
+            row=1, column=0, sticky=tk.W, pady=(0, 3), padx=5)
 
-        self.quality_combo = ttk.Combobox(self.quality_label_frame, textvariable=self.quality_var,
-                                         state='readonly', width=30)
-        self.quality_combo.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 5))
+        self.quality_combo = ctk.CTkComboBox(self.quality_label_frame, variable=self.quality_var, width=30)
+        self.quality_combo.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(0, 5), padx=5)
 
         # Audio bitrate selection (in a separate frame so it can be hidden independently)
-        self.audio_bitrate_frame = ttk.Frame(self.quality_label_frame)
-        self.audio_bitrate_frame.grid(row=2, column=0, sticky=(tk.W, tk.E))
+        self.audio_bitrate_frame = ctk.CTkFrame(self.quality_label_frame)
+        self.audio_bitrate_frame.grid(row=3, column=0, sticky=(tk.W, tk.E), padx=5)
         self.audio_bitrate_frame.columnconfigure(0, weight=1)
 
-        ttk.Label(self.audio_bitrate_frame, text="Audio Bitrate:", font=('Arial', 8, 'bold')).grid(
+        ctk.CTkLabel(self.audio_bitrate_frame, text="Audio Bitrate:", font=('Arial', 11, 'bold')).grid(
             row=0, column=0, sticky=tk.W, pady=(0, 3))
 
         self.audio_bitrate_var = tk.StringVar(value="best")
-        self.audio_bitrate_combo = ttk.Combobox(self.audio_bitrate_frame, textvariable=self.audio_bitrate_var,
-                                               state='readonly', width=30)
+        self.audio_bitrate_combo = ctk.CTkComboBox(self.audio_bitrate_frame, variable=self.audio_bitrate_var, width=30)
         self.audio_bitrate_combo.grid(row=1, column=0, sticky=(tk.W, tk.E))
 
         # Store mapping of display names to values
@@ -897,52 +1037,53 @@ class MainWindow:
 
     def _create_download_button(self, parent):
         """Create download button and progress bar"""
-        # Progress bar frame (hidden initially)
-        self.download_progress_frame = ttk.Frame(parent)
-        self.download_progress_frame.grid(row=9, column=0, sticky=(tk.W, tk.E), pady=(0, 8))
-        self.download_progress_frame.columnconfigure(0, weight=1)
-
-        self.download_progress_label = ttk.Label(self.download_progress_frame, text="",
-                                                 font=('Arial', 9))
-        self.download_progress_label.grid(row=0, column=0, sticky=tk.W, pady=(0, 5))
-
-        self.download_progress_bar = ttk.Progressbar(self.download_progress_frame,
-                                                     mode='determinate', length=400)
-        self.download_progress_bar.grid(row=1, column=0, sticky=(tk.W, tk.E))
-
-        # Initially hide progress
-        self.download_progress_frame.grid_remove()
-
         # Button frame for Download and Cancel buttons
-        button_frame = ttk.Frame(parent)
+        button_frame = ctk.CTkFrame(parent, fg_color="transparent")
         button_frame.grid(row=9, column=0, pady=(0, 5), sticky=(tk.W, tk.E))
         button_frame.columnconfigure(0, weight=1)
         button_frame.columnconfigure(1, weight=0)
 
         # Download button (disabled until metadata is fetched)
-        self.download_btn = ttk.Button(button_frame, text="📥 Download",
-                                       command=self.start_download, style='Accent.TButton',
+        self.download_btn = ctk.CTkButton(button_frame, text="📥 Download",
+                                       command=self.start_download,
                                        state='disabled')
         self.download_btn.grid(row=0, column=0, sticky=(tk.W, tk.E), padx=(0, 5))
 
         # Cancel button (hidden initially)
-        self.cancel_btn = ttk.Button(button_frame, text="⏹️ Cancel",
+        self.cancel_btn = ctk.CTkButton(button_frame, text="⏹️ Cancel",
                                      command=self.cancel_download, state='disabled')
         self.cancel_btn.grid(row=0, column=1, sticky=tk.E)
-    
+
+        # Progress bar frame (below buttons, hidden initially)
+        self.download_progress_frame = ctk.CTkFrame(parent)
+        self.download_progress_frame.grid(row=10, column=0, sticky=(tk.W, tk.E), pady=(5, 8))
+        self.download_progress_frame.columnconfigure(0, weight=1)
+
+        self.download_progress_label = ctk.CTkLabel(self.download_progress_frame, text="",
+                                                 font=('Arial', 12))
+        self.download_progress_label.grid(row=0, column=0, sticky=tk.W, pady=(5, 5), padx=5)
+
+        self.download_progress_bar = ctk.CTkProgressBar(self.download_progress_frame,
+                                                     mode='determinate')
+        self.download_progress_bar.grid(row=1, column=0, sticky=(tk.W, tk.E), padx=5, pady=(0, 5))
+        self.download_progress_bar.set(0)
+
+        # Initially hide progress
+        self.download_progress_frame.grid_remove()
+
     def _create_output_log(self, parent):
         """Create output log section"""
-        self.output_text = scrolledtext.ScrolledText(parent, wrap=tk.WORD, state='disabled')
-        self.output_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        self.output_text = ctk.CTkTextbox(parent, wrap="word")
+        self.output_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), padx=5, pady=5)
+        self.output_text.configure(state="disabled")
         # Add context menu (read-only mode)
         ContextMenu(self.output_text, read_only=True)
 
     def _create_status_bar(self, parent):
         """Create status bar"""
         self.status_var = tk.StringVar(value="Ready")
-        status_bar = ttk.Label(parent, textvariable=self.status_var, relief=tk.SUNKEN,
-                              anchor=tk.W)
-        status_bar.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=(5, 0))
+        status_bar = ctk.CTkLabel(parent, textvariable=self.status_var, anchor=tk.W)
+        status_bar.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=(5, 0), padx=5)
     
     def browse_yt_dlp(self):
         """Browse for yt-dlp executable"""
@@ -1028,12 +1169,12 @@ class MainWindow:
             return
 
         # Update metadata display
-        self.metadata_title.config(text=metadata.get('title', 'Unknown'))
-        self.metadata_duration.config(
+        self.metadata_title.configure(text=metadata.get('title', 'Unknown'))
+        self.metadata_duration.configure(
             text=MetadataFetcher.format_duration(metadata.get('duration', 0))
         )
-        self.metadata_uploader.config(text=metadata.get('uploader', 'Unknown'))
-        self.metadata_views.config(
+        self.metadata_uploader.configure(text=metadata.get('uploader', 'Unknown'))
+        self.metadata_views.configure(
             text=MetadataFetcher.format_number(metadata.get('view_count', 0))
         )
 
@@ -1157,12 +1298,12 @@ class MainWindow:
 
             # Show metadata for first selected video
             first_video = selected_videos[0]
-            self.metadata_title.config(text=first_video.get('title', 'Unknown'))
-            self.metadata_duration.config(
+            self.metadata_title.configure(text=first_video.get('title', 'Unknown'))
+            self.metadata_duration.configure(
                 text=MetadataFetcher.format_duration(first_video.get('duration', 0))
             )
-            self.metadata_uploader.config(text=f"Playlist ({len(selected_videos)} videos)")
-            self.metadata_views.config(text="")
+            self.metadata_uploader.configure(text=f"Playlist ({len(selected_videos)} videos)")
+            self.metadata_views.configure(text="")
 
             # Load thumbnail
             thumbnail_url = first_video.get('thumbnail', '')
@@ -1194,9 +1335,12 @@ class MainWindow:
         Args:
             formats: List of available format strings (e.g., ['MP4', 'WEBM', 'M4A'])
         """
-        # Clear existing radio buttons
+        # Clear existing radio buttons safely (may fail during rapid resize)
         for widget in self.format_radio_frame.winfo_children():
-            widget.destroy()
+            try:
+                widget.destroy()
+            except Exception:
+                pass
         self.format_radios = []
 
         # Define format categories
@@ -1233,7 +1377,7 @@ class MainWindow:
         for fmt in filtered_formats:
             fmt_lower = fmt.lower()
             is_video = fmt_lower in video_formats
-            radio = ttk.Radiobutton(
+            radio = ctk.CTkRadioButton(
                 self.format_radio_frame,
                 text=f"🎥 {fmt.upper()}" if is_video else f"🎵 {fmt.upper()}",
                 variable=self.format_var,
@@ -1264,12 +1408,11 @@ class MainWindow:
             display_names: List of display names for quality options
             values: List of corresponding values for quality options
         """
-        self.quality_combo['values'] = display_names
+        self.quality_combo.configure(values=display_names)
         self.quality_mapping = {name: val for name, val in zip(display_names, values)}
 
         if display_names:
-            self.quality_combo.current(0)
-            self.quality_var.set(display_names[0])
+            self.quality_combo.set(display_names[0])
 
     def _update_audio_bitrate_options(self, display_names: list, values: list):
         """
@@ -1279,12 +1422,11 @@ class MainWindow:
             display_names: List of display names for audio bitrate options
             values: List of corresponding values for audio bitrate options
         """
-        self.audio_bitrate_combo['values'] = display_names
+        self.audio_bitrate_combo.configure(values=display_names)
         self.audio_bitrate_mapping = {name: val for name, val in zip(display_names, values)}
 
         if display_names:
-            self.audio_bitrate_combo.current(0)
-            self.audio_bitrate_var.set(display_names[0])
+            self.audio_bitrate_combo.set(display_names[0])
 
     def _on_mode_changed(self):
         """Handle mode change (video/audio/auto)"""
@@ -1333,11 +1475,11 @@ class MainWindow:
     def _toggle_trim_controls(self):
         """Toggle trim control states"""
         if self.trim_enabled.get():
-            self.trim_start_entry.config(state='normal')
-            self.trim_end_entry.config(state='normal')
+            self.trim_start_entry.configure(state='normal')
+            self.trim_end_entry.configure(state='normal')
         else:
-            self.trim_start_entry.config(state='disabled')
-            self.trim_end_entry.config(state='disabled')
+            self.trim_start_entry.configure(state='disabled')
+            self.trim_end_entry.configure(state='disabled')
 
     def log_message(self, message):
         """
@@ -1444,11 +1586,11 @@ class MainWindow:
 
         # Show and start progress bar
         self.download_progress_frame.grid()
-        self.download_progress_label.config(text="Preparing download...")
-        self.download_progress_bar['value'] = 0  # Reset progress bar
+        self.download_progress_label.configure(text="Preparing download...")
+        self.download_progress_bar.set(0)  # Reset progress bar
 
         # Switch to log tab
-        self.notebook.select(self.log_tab)
+        self.tabview.set("📄 Output Log")
 
         # Clear previous output
         self.output_text.configure(state='normal')
@@ -1560,10 +1702,10 @@ class MainWindow:
                 self.log_message(f"{'='*70}")
 
                 # Update progress label
-                self.download_progress_label.config(
+                self.download_progress_label.configure(
                     text=f"Downloading {idx}/{total_videos}: {video_title[:50]}..."
                 )
-                self.download_progress_bar['value'] = ((idx - 1) / total_videos) * 100
+                self.download_progress_bar.set((idx - 1) / total_videos)
 
                 # Reset event for this download
                 download_event.clear()
@@ -1598,8 +1740,8 @@ class MainWindow:
                     break
 
             # All videos downloaded
-            self.download_progress_bar['value'] = 100
-            self.download_progress_label.config(text=f"Completed downloading {total_videos} videos")
+            self.download_progress_bar.set(1.0)
+            self.download_progress_label.configure(text=f"Completed downloading {total_videos} videos")
             self.log_message(f"\n{'='*70}")
             self.log_message(f"✓ Playlist download complete! Downloaded {total_videos} videos")
             self.log_message(f"{'='*70}")
@@ -1631,11 +1773,11 @@ class MainWindow:
 
         # Show and start progress bar
         self.download_progress_frame.grid()
-        self.download_progress_label.config(text="Downloading with custom template...")
-        self.download_progress_bar['value'] = 0
+        self.download_progress_label.configure(text="Downloading with custom template...")
+        self.download_progress_bar.set(0)
 
         # Switch to log tab
-        self.notebook.select(self.log_tab)
+        self.tabview.set("📄 Output Log")
 
         # Clear previous output
         self.output_text.configure(state='normal')
@@ -1687,9 +1829,9 @@ class MainWindow:
                             downloaded = progress_info.get('downloaded', 'N/A')
                             total = progress_info.get('total', 'N/A')
 
-                            self.download_progress_bar['value'] = percent
+                            self.download_progress_bar.set(percent / 100.0)
                             progress_text = f"Downloading... {percent:.1f}% | {downloaded} / {total} | {speed} | ETA {eta}"
-                            self.download_progress_label.config(text=progress_text)
+                            self.download_progress_label.configure(text=progress_text)
 
                 process.wait()
 
@@ -1716,7 +1858,7 @@ class MainWindow:
     
     def _on_download_started(self):
         """Callback when actual download starts (after preparation)"""
-        self.download_progress_label.config(text="Downloading...")
+        self.download_progress_label.configure(text="Downloading...")
 
     def _on_download_progress(self, progress_info):
         """Callback for download progress updates
@@ -1730,11 +1872,11 @@ class MainWindow:
         downloaded = progress_info.get('downloaded', 'N/A')
         total = progress_info.get('total', 'N/A')
 
-        self.download_progress_bar['value'] = percent
+        self.download_progress_bar.set(percent / 100.0)
 
         # Format: "Downloading... 45.3% | 123.45MiB / 456.78MiB | 1.23MiB/s | ETA 00:30"
         progress_text = f"Downloading... {percent:.1f}% | {downloaded} / {total} | {speed} | ETA {eta}"
-        self.download_progress_label.config(text=progress_text)
+        self.download_progress_label.configure(text=progress_text)
 
     def _parse_template_progress_line(self, line: str):
         """Parse progress information from yt-dlp output line for template downloads
@@ -1796,8 +1938,8 @@ class MainWindow:
         self.cancel_btn.configure(state='disabled')
 
         # Set progress bar to 100% and hide
-        self.download_progress_bar['value'] = 100
-        self.download_progress_label.config(text="✓ Download completed!")
+        self.download_progress_bar.set(1.0)
+        self.download_progress_label.configure(text="✓ Download completed!")
         # Keep progress visible for a moment, then hide
         self.root.after(2000, self.download_progress_frame.grid_remove)
 
@@ -1815,7 +1957,7 @@ class MainWindow:
         self.cancel_btn.configure(state='disabled')
 
         # Hide progress bar
-        self.download_progress_label.config(text="✗ Download failed!")
+        self.download_progress_label.configure(text="✗ Download failed!")
         self.root.after(2000, self.download_progress_frame.grid_remove)
 
         messagebox.showerror("Error", f"Download failed: {error_msg}")
@@ -1913,14 +2055,15 @@ class MainWindow:
             # Resize to compact size (max 120x90, maintain aspect ratio)
             image.thumbnail((120, 90), Image.Resampling.LANCZOS)
 
-            # Convert to PhotoImage
-            photo = ImageTk.PhotoImage(image)
+            # Convert to CTkImage for proper HiDPI scaling
+            photo = ctk.CTkImage(light_image=image, dark_image=image,
+                                 size=(image.width, image.height))
 
             # Keep a reference to prevent garbage collection
             self.thumbnail_photo = photo
 
             # Display in label
-            self.thumbnail_label.config(image=photo)
+            self.thumbnail_label.configure(image=photo)
 
             self.log_message("✓ Thumbnail loaded")
 
@@ -1928,21 +2071,9 @@ class MainWindow:
             self.log_message(f"⚠ Could not load thumbnail: {str(e)}")
 
     def _check_scrollbar_needed(self):
-        """Check if scrollbar is needed and show/hide accordingly"""
-        try:
-            # Get the canvas height and content height
-            canvas_height = self.download_canvas.winfo_height()
-            content_height = self.download_tab.winfo_reqheight()
-
-            # Show scrollbar if content is taller than canvas
-            if content_height > canvas_height and not self.scrollbar_visible:
-                self.download_scrollbar.pack(side=tk.RIGHT, fill=tk.Y, before=self.download_canvas)
-                self.scrollbar_visible = True
-            elif content_height <= canvas_height and self.scrollbar_visible:
-                self.download_scrollbar.pack_forget()
-                self.scrollbar_visible = False
-        except:
-            pass  # Ignore errors during initialization
+        """Check if scrollbar is needed and show/hide accordingly.
+        Note: CTkScrollableFrame handles its own scrollbar automatically."""
+        pass
 
     def _resize_window_for_metadata(self):
         """Resize window to accommodate metadata and trim sections"""
@@ -1991,11 +2122,11 @@ class MainWindow:
         # Disable button during download
         self.ytdlp_download_btn.configure(state='disabled')
         self.ytdlp_progress_frame.grid()
-        self.ytdlp_progress_bar['value'] = 0
-        self.ytdlp_progress_label.config(text=f"Preparing to download {version_type} version...")
+        self.ytdlp_progress_bar.set(0)
+        self.ytdlp_progress_label.configure(text=f"Preparing to download {version_type} version...")
 
         # Switch to log tab
-        self.notebook.select(self.log_tab)
+        self.tabview.set("📄 Output Log")
 
         # Clear log
         self.output_text.configure(state='normal')
@@ -2010,7 +2141,7 @@ class MainWindow:
 
             if total > 0:
                 percent = (downloaded / total) * 100
-                self.ytdlp_progress_bar['value'] = percent
+                self.ytdlp_progress_bar.set(percent / 100.0)
 
                 # Format speed and ETA
                 speed_str = self._format_speed(speed)
@@ -2020,14 +2151,14 @@ class MainWindow:
                 downloaded_mb = downloaded / (1024 * 1024)
                 total_mb = total / (1024 * 1024)
 
-                self.ytdlp_progress_label.config(
+                self.ytdlp_progress_label.configure(
                     text=f"Downloading: {downloaded_mb:.2f}MiB / {total_mb:.2f}MiB ({percent:.1f}%) | {speed_str} | ETA {eta_str}"
                 )
 
         def on_complete(file_path):
             self.ytdlp_download_btn.configure(state='normal')
-            self.ytdlp_progress_bar['value'] = 100
-            self.ytdlp_progress_label.config(text="✓ Download completed!")
+            self.ytdlp_progress_bar.set(1.0)
+            self.ytdlp_progress_label.configure(text="✓ Download completed!")
             self.status_var.set("yt-dlp downloaded successfully")
 
             # Set the path in the main yt-dlp entry
@@ -2081,11 +2212,11 @@ class MainWindow:
         # Disable button during download
         self.ffmpeg_download_btn.configure(state='disabled')
         self.ffmpeg_progress_frame.grid()
-        self.ffmpeg_progress_bar['value'] = 0
-        self.ffmpeg_progress_label.config(text="Preparing to download FFmpeg...")
+        self.ffmpeg_progress_bar.set(0)
+        self.ffmpeg_progress_label.configure(text="Preparing to download FFmpeg...")
 
         # Switch to log tab
-        self.notebook.select(self.log_tab)
+        self.tabview.set("📄 Output Log")
 
         # Clear log
         self.output_text.configure(state='normal')
@@ -2100,7 +2231,7 @@ class MainWindow:
 
             if total > 0:
                 percent = (downloaded / total) * 100
-                self.ffmpeg_progress_bar['value'] = percent
+                self.ffmpeg_progress_bar.set(percent / 100.0)
 
                 # Format speed and ETA
                 speed_str = self._format_speed(speed)
@@ -2110,14 +2241,14 @@ class MainWindow:
                 downloaded_mb = downloaded / (1024 * 1024)
                 total_mb = total / (1024 * 1024)
 
-                self.ffmpeg_progress_label.config(
+                self.ffmpeg_progress_label.configure(
                     text=f"Downloading: {downloaded_mb:.2f}MiB / {total_mb:.2f}MiB ({percent:.1f}%) | {speed_str} | ETA {eta_str}"
                 )
 
         def on_complete(file_path):
             self.ffmpeg_download_btn.configure(state='normal')
-            self.ffmpeg_progress_bar['value'] = 100
-            self.ffmpeg_progress_label.config(text="✓ Download completed!")
+            self.ffmpeg_progress_bar.set(1.0)
+            self.ffmpeg_progress_label.configure(text="✓ Download completed!")
             self.status_var.set("FFmpeg downloaded successfully")
 
             # Hide progress bar after 2 seconds
@@ -2164,8 +2295,8 @@ class MainWindow:
             template = templates[index]
 
             # Update details
-            self.template_name_label.config(text=template['name'])
-            self.template_desc_label.config(text=template['description'])
+            self.template_name_label.configure(text=template['name'])
+            self.template_desc_label.configure(text=template['description'])
 
             self.template_cmd_text.delete('1.0', tk.END)
             self.template_cmd_text.insert('1.0', template['command'])
@@ -2202,7 +2333,7 @@ class MainWindow:
 
             if result:
                 # Switch to download tab
-                self.notebook.select(self.download_canvas_frame)
+                self.tabview.set("📥 Download")
 
                 # Store the template command for use
                 self.current_template_command = template['command']
@@ -2264,8 +2395,8 @@ class MainWindow:
                     self._refresh_template_list()
 
                     # Clear details
-                    self.template_name_label.config(text="")
-                    self.template_desc_label.config(text="")
+                    self.template_name_label.configure(text="")
+                    self.template_desc_label.configure(text="")
                     self.template_cmd_text.delete('1.0', tk.END)
                     self.template_use_btn.configure(state='disabled')
                     self.template_delete_btn.configure(state='disabled')
