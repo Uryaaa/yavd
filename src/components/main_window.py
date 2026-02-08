@@ -573,7 +573,7 @@ class MainWindow:
         self.template_listbox = tk.Listbox(list_frame,
                                           yscrollcommand=list_scroll_y.set,
                                           xscrollcommand=list_scroll_x.set,
-                                          height=8, font=('Arial', 11), activestyle='dotbox')
+                                          height=8, font=('Arial', 13), activestyle='dotbox')
         list_scroll_y.configure(command=self.template_listbox.yview)
         list_scroll_x.configure(command=self.template_listbox.xview)
 
@@ -587,9 +587,9 @@ class MainWindow:
         right_column = ctk.CTkFrame(content_frame)
         right_column.grid(row=0, column=1, sticky=(tk.W, tk.E, tk.N, tk.S), padx=(3, 0))
         right_column.columnconfigure(0, weight=1)
-        right_column.rowconfigure(0, weight=2)  # Details frame gets more space
+        right_column.rowconfigure(0, weight=1)  # Details frame expands
         right_column.rowconfigure(1, weight=0)  # Action buttons - fixed height
-        right_column.rowconfigure(2, weight=1)  # Add frame gets less space
+        right_column.rowconfigure(2, weight=0)  # Add frame - fixed height, no expand
 
         # Template details frame with scrollable content
         details_outer_frame = ctk.CTkFrame(right_column)
