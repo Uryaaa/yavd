@@ -472,12 +472,12 @@ class MainWindowUI:
         self.template_item_buttons = []
 
         # RIGHT COLUMN: Template details and actions (scrollable for smaller windows)
-        right_column = ctk.CTkScrollableFrame(content_frame)
-        right_column.grid(row=0, column=1, sticky=(tk.W, tk.E, tk.N, tk.S), padx=(3, 0))
-        right_column.columnconfigure(0, weight=1)
+        self.templates_right_scroll = ctk.CTkScrollableFrame(content_frame)
+        self.templates_right_scroll.grid(row=0, column=1, sticky=(tk.W, tk.E, tk.N, tk.S), padx=(3, 0))
+        self.templates_right_scroll.columnconfigure(0, weight=1)
 
         # Template details frame with scrollable content
-        details_outer_frame = ctk.CTkFrame(right_column)
+        details_outer_frame = ctk.CTkFrame(self.templates_right_scroll)
         details_outer_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 6))
         details_outer_frame.columnconfigure(0, weight=1)
         details_outer_frame.rowconfigure(0, weight=0)  # Label row - no expand
@@ -487,29 +487,29 @@ class MainWindowUI:
             row=0, column=0, sticky=tk.W, pady=(5, 5), padx=5)
 
         # Use CTkScrollableFrame instead of raw tk.Canvas
-        details_frame = ctk.CTkScrollableFrame(details_outer_frame, height=140)
-        details_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), padx=5, pady=(0, 5))
-        details_frame.columnconfigure(0, weight=1)
+        self.template_details_scroll = ctk.CTkScrollableFrame(details_outer_frame, height=140)
+        self.template_details_scroll.grid(row=1, column=0, sticky=(tk.W, tk.E), padx=5, pady=(0, 5))
+        self.template_details_scroll.columnconfigure(0, weight=1)
 
         # Name
-        ctk.CTkLabel(details_frame, text="Name:", font=('Arial', 11, 'bold')).grid(
+        ctk.CTkLabel(self.template_details_scroll, text="Name:", font=('Arial', 11, 'bold')).grid(
             row=0, column=0, sticky=tk.W, pady=(0, 0))
-        self.template_name_label = ctk.CTkLabel(details_frame, text="Select a template to view details",
+        self.template_name_label = ctk.CTkLabel(self.template_details_scroll, text="Select a template to view details",
                                             font=('Arial', 11), text_color='gray')
         self.template_name_label.grid(row=1, column=0, sticky=tk.W, pady=(0, 2))
 
         # Description
-        ctk.CTkLabel(details_frame, text="Description:", font=('Arial', 11, 'bold')).grid(
+        ctk.CTkLabel(self.template_details_scroll, text="Description:", font=('Arial', 11, 'bold')).grid(
             row=2, column=0, sticky=tk.W, pady=(0, 0))
-        self.template_desc_label = ctk.CTkLabel(details_frame, text="",
+        self.template_desc_label = ctk.CTkLabel(self.template_details_scroll, text="",
                                             font=('Arial', 11), wraplength=400, justify=tk.LEFT)
         self.template_desc_label.grid(row=3, column=0, sticky=tk.W, pady=(0, 2))
 
         # Command
-        ctk.CTkLabel(details_frame, text="Command:", font=('Arial', 11, 'bold')).grid(
+        ctk.CTkLabel(self.template_details_scroll, text="Command:", font=('Arial', 11, 'bold')).grid(
             row=4, column=0, sticky=tk.W, pady=(0, 0))
 
-        cmd_frame = ctk.CTkFrame(details_frame)
+        cmd_frame = ctk.CTkFrame(self.template_details_scroll)
         cmd_frame.grid(row=5, column=0, sticky=(tk.W, tk.E), pady=(0, 2))
         cmd_frame.columnconfigure(0, weight=1)
 
@@ -519,11 +519,11 @@ class MainWindowUI:
         ContextMenu(self.template_cmd_text, read_only=True)
 
         sep_color = ("#D3D9E1", "#2A313B")
-        sep_1 = ctk.CTkFrame(right_column, height=1, fg_color=sep_color)
+        sep_1 = ctk.CTkFrame(self.templates_right_scroll, height=1, fg_color=sep_color)
         sep_1.grid(row=1, column=0, sticky=(tk.W, tk.E), padx=5, pady=(2, 6))
 
         # Action buttons (outside canvas, in right_column directly)
-        btn_frame = ctk.CTkFrame(right_column)
+        btn_frame = ctk.CTkFrame(self.templates_right_scroll)
         btn_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(6, 6))
         btn_frame.columnconfigure(0, weight=1)
         btn_frame.columnconfigure(1, weight=1)
@@ -536,11 +536,11 @@ class MainWindowUI:
                                              command=self._delete_template, state='disabled')
         self.template_delete_btn.grid(row=0, column=1, padx=(3, 5), pady=5, sticky=(tk.W, tk.E))
 
-        sep_2 = ctk.CTkFrame(right_column, height=1, fg_color=sep_color)
+        sep_2 = ctk.CTkFrame(self.templates_right_scroll, height=1, fg_color=sep_color)
         sep_2.grid(row=3, column=0, sticky=(tk.W, tk.E), padx=5, pady=(4, 6))
 
         # Add custom template section
-        add_frame = ctk.CTkFrame(right_column)
+        add_frame = ctk.CTkFrame(self.templates_right_scroll)
         add_frame.grid(row=4, column=0, sticky=(tk.W, tk.E), pady=(4, 0))
         add_frame.columnconfigure(1, weight=1)
 
