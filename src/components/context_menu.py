@@ -26,21 +26,16 @@ class ContextMenu:
         # Get the internal tk widget for CTk widgets (needed for tk.Menu master and event_generate)
         self._tk_widget = self._get_internal_widget(widget)
 
-        self.menu = tk.Menu(self._tk_widget, tearoff=0)
+        self.menu_font = ('Arial', 12)
+        self.menu = tk.Menu(self._tk_widget, tearoff=0, font=self.menu_font)
 
         # Build menu items
-        if not read_only:
-            self.menu.add_command(label="Cut", command=self._cut)
-            self.menu.add_command(label="Copy", command=self._copy)
-            self.menu.add_command(label="Paste", command=self._paste)
-            self.menu.add_separator()
-            self.menu.add_command(label="Select All", command=self._select_all)
-            self.menu.add_command(label="Clear", command=self._clear)
-        else:
-            # Read-only mode: only copy and select all
-            self.menu.add_command(label="Copy", command=self._copy)
-            self.menu.add_separator()
-            self.menu.add_command(label="Select All", command=self._select_all)
+        self.menu.add_command(label="Cut", command=self._cut)
+        self.menu.add_command(label="Copy", command=self._copy)
+        self.menu.add_command(label="Paste", command=self._paste)
+        self.menu.add_separator()
+        self.menu.add_command(label="Select All", command=self._select_all)
+        self.menu.add_command(label="Clear", command=self._clear)
 
         # Bind right-click to show menu
         self.widget.bind("<Button-3>", self._show_menu)
@@ -112,7 +107,7 @@ class ContextMenu:
                     item_label = self.menu.entryconfig(i, "label")[4][4]
 
                     if item_label == "Cut":
-                        state = "normal" if has_selection else "disabled"
+                        state = "normal" if has_selection and not self.read_only else "disabled"
                         self.menu.entryconfig(i, state=state)
                     elif item_label == "Copy":
                         state = "normal" if has_selection else "disabled"
@@ -124,7 +119,7 @@ class ContextMenu:
                         state = "normal" if has_text else "disabled"
                         self.menu.entryconfig(i, state=state)
                     elif item_label == "Clear":
-                        state = "normal" if has_text else "disabled"
+                        state = "normal" if has_text and not self.read_only else "disabled"
                         self.menu.entryconfig(i, state=state)
                 except (tk.TclError, IndexError):
                     pass
@@ -184,4 +179,3 @@ class ContextMenu:
                 self.widget.delete("1.0", tk.END)
         except tk.TclError:
             pass
-

@@ -172,42 +172,42 @@ class MetadataFetcher:
                     # Check if this is a playlist (has n_entries and playlist_id)
                     n_entries = first_entry.get('n_entries', 0)
                     playlist_id = first_entry.get('playlist_id', '')
+                    playlist_title = first_entry.get('playlist_title', 'Playlist')
 
-                    if n_entries > 1 or (n_entries > 0 and playlist_id):
-                        # This is a playlist
-                        playlist_title = first_entry.get('playlist_title', 'Playlist')
+                    # Parse all entries to get video list
+                    # Use a set to track seen IDs and prevent duplicates
+                    seen_ids = set()
+                    videos = []
+                    for line in lines:
+                        try:
+                            entry = json.loads(line)
 
-                        # Parse all entries to get video list
-                        # Use a set to track seen IDs and prevent duplicates
-                        seen_ids = set()
-                        videos = []
-                        for line in lines:
-                            try:
-                                entry = json.loads(line)
-
-                                # Skip playlist metadata entries (they have _type: 'playlist')
-                                if entry.get('_type') == 'playlist':
-                                    continue
-
-                                # Get video ID for deduplication
-                                video_id = entry.get('id', '')
-
-                                # Skip if we've already seen this video or if no ID
-                                if not video_id or video_id in seen_ids:
-                                    continue
-
-                                seen_ids.add(video_id)
-
-                                videos.append({
-                                    'id': video_id,
-                                    'title': entry.get('title', 'Unknown'),
-                                    'url': entry.get('url', ''),
-                                    'duration': entry.get('duration', 0),
-                                    'thumbnail': entry.get('thumbnails', [{}])[0].get('url', '') if entry.get('thumbnails') else '',
-                                })
-                            except json.JSONDecodeError:
+                            # Skip playlist metadata entries (they have _type: 'playlist')
+                            if entry.get('_type') == 'playlist':
                                 continue
 
+                            # Get video ID for deduplication
+                            video_id = entry.get('id', '')
+
+                            # Skip if we've already seen this video or if no ID
+                            if not video_id or video_id in seen_ids:
+                                continue
+
+                            seen_ids.add(video_id)
+
+                            videos.append({
+                                'id': video_id,
+                                'title': entry.get('title', 'Unknown'),
+                                'url': entry.get('url', ''),
+                                'duration': entry.get('duration', 0),
+                                'thumbnail': entry.get('thumbnails', [{}])[0].get('url', '') if entry.get('thumbnails') else '',
+                            })
+                        except json.JSONDecodeError:
+                            continue
+
+                    # Some playlist types (e.g., YouTube Mix/Radio) may omit n_entries/playlist_id.
+                    # Treat as playlist if multiple unique videos are present.
+                    if n_entries > 1 or (n_entries > 0 and playlist_id) or len(videos) > 1:
                         return {
                             'is_playlist': True,
                             'playlist_id': playlist_id,

@@ -1,12 +1,22 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+import os
+import sys
+
 block_cipher = None
+
+_spec_dir = os.path.abspath(os.path.dirname(sys.argv[0])) if sys.argv else os.getcwd()
+if not _spec_dir:
+    _spec_dir = os.getcwd()
+_icon_path = os.path.join(_spec_dir, "icon.ico")
+if not os.path.exists(_icon_path):
+    _icon_path = os.path.join(os.getcwd(), "icon.ico")
 
 a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[(_icon_path, ".")] if os.path.exists(_icon_path) else [],
     hiddenimports=[
         'PIL._tkinter_finder',
         'tkinter',
@@ -47,6 +57,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='icon.ico',  # Application icon
+    icon=_icon_path if os.path.exists(_icon_path) else None,  # Application icon
 )
-

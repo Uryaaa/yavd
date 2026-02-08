@@ -796,6 +796,7 @@ class Downloader:
             audio_formats = ['mp3', 'wav', 'aac', 'm4a', 'opus', 'vorbis', 'flac', 'ogg']
             video_formats = ['mp4', 'mkv', 'avi', 'mov', 'webm', 'flv']
 
+            is_gif_target = target_format_lower == 'gif'
             is_audio_target = target_format_lower in audio_formats
             is_video_target = target_format_lower in video_formats
 
@@ -811,6 +812,103 @@ class Downloader:
 
             # Build FFmpeg command based on target format
             cmd = ["ffmpeg", "-y", "-i", input_file]
+
+            if is_gif_target:
+                palette_file = f"{base}_palette.png"
+                output_file = f"{base}.gif"
+
+                gif_fps = "15"
+                gif_scale = "480:-1:flags=lanczos"
+
+                palette_cmd = [
+                    "ffmpeg", "-y",
+                    "-i", input_file,
+                    "-vf", f"fps={gif_fps},scale={gif_scale},palettegen=stats_mode=diff",
+                    palette_file
+                ]
+
+                on_log("Generating GIF palette...")
+                on_log(f"Command: {' '.join(palette_cmd)}")
+
+                process = subprocess.Popen(
+                    palette_cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    encoding='utf-8',
+                    errors='replace',
+                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+                )
+
+                for line in process.stderr:
+                    line = line.rstrip()
+                    if line and any(x in line for x in ['frame=', 'time=', 'Stream', 'Output', 'Error', 'error']):
+                        on_log(line)
+
+                process.wait()
+
+                if process.returncode != 0:
+                    on_log(f"✗ FFmpeg palette generation failed with code: {process.returncode}")
+                    if os.path.exists(palette_file):
+                        os.remove(palette_file)
+                    return None
+
+                gif_cmd = [
+                    "ffmpeg", "-y",
+                    "-i", input_file,
+                    "-i", palette_file,
+                    "-lavfi", f"fps={gif_fps},scale={gif_scale}[x];[x][1:v]paletteuse",
+                    "-loop", "0",
+                    output_file
+                ]
+
+                on_log(f"Converting to {target_format_lower} with FFmpeg...")
+                on_log(f"Command: {' '.join(gif_cmd)}")
+
+                process = subprocess.Popen(
+                    gif_cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    encoding='utf-8',
+                    errors='replace',
+                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+                )
+
+                for line in process.stderr:
+                    line = line.rstrip()
+                    if line and any(x in line for x in ['frame=', 'time=', 'Stream', 'Output', 'Error', 'error']):
+                        on_log(line)
+
+                process.wait()
+
+                # Clean up palette file
+                if os.path.exists(palette_file):
+                    try:
+                        os.remove(palette_file)
+                    except Exception as e:
+                        on_log(f"⚠ Could not remove palette file: {str(e)}")
+
+                if process.returncode != 0:
+                    on_log(f"✗ FFmpeg conversion failed with code: {process.returncode}")
+                    if os.path.exists(output_file):
+                        os.remove(output_file)
+                    return None
+
+                on_log(f"✓ Converted to {target_format_lower}: {os.path.basename(output_file)}")
+
+                # Remove original file
+                try:
+                    os.remove(input_file)
+                except Exception as e:
+                    on_log(f"⚠ Could not remove original file: {str(e)}")
+
+                # Clean up thumbnail file if present
+                if thumbnail_file and os.path.exists(thumbnail_file):
+                    try:
+                        os.remove(thumbnail_file)
+                    except Exception as e:
+                        on_log(f"⚠ Could not clean up thumbnail file: {str(e)}")
+
+                return output_file
 
             if is_audio_target:
                 # Audio conversion

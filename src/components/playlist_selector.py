@@ -61,38 +61,26 @@ class PlaylistSelector:
 
         ctk.CTkCheckBox(control_frame, text="Select All",
                        variable=self.select_all_var,
-                       command=self._toggle_select_all).pack(side=tk.LEFT, padx=(0, 10))
+                       command=self._toggle_select_all,
+                       font=('Arial', 13),
+                       checkbox_width=22, checkbox_height=22).pack(side=tk.LEFT, padx=(0, 10))
 
         ctk.CTkButton(control_frame, text="Clear All",
                   command=self._clear_all, width=80).pack(side=tk.LEFT)
 
-        # Video list with scrollbar
+        # Video list with checkboxes
         list_frame = ctk.CTkFrame(self.dialog)
         list_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
 
-        scrollbar = ctk.CTkScrollbar(list_frame)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.video_scroll = ctk.CTkScrollableFrame(list_frame)
+        self.video_scroll.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        self.video_scroll.columnconfigure(0, weight=1)
 
-        self.video_listbox = tk.Listbox(list_frame, yscrollcommand=scrollbar.set,
-                                       selectmode=tk.MULTIPLE, height=15,
-                                       font=('Arial', 12))
-        self.video_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar.configure(command=self.video_listbox.yview)
+        self.video_vars = []
+        self.videos = self.playlist_info.get('videos', [])
 
-        # Populate listbox and pre-select videos if initial_selected_ids provided
-        videos = self.playlist_info.get('videos', [])
-        for idx, video in enumerate(videos):
-            title = video.get('title', 'Unknown')
-            self.video_listbox.insert(tk.END, f"{idx+1}. {title}")
-
-            # Pre-select if this video was previously selected
-            video_id = video.get('id', '')
-            if video_id and video_id in self.initial_selected_ids:
-                self.video_listbox.select_set(idx)
-
-        # Update select all checkbox state
-        if len(self.initial_selected_ids) == len(videos) and len(videos) > 0:
-            self.select_all_var.set(True)
+        # Defer population so the dialog can render first (important for large playlists)
+        self.dialog.after(0, self._populate_videos)
 
         # Button frame
         button_frame = ctk.CTkFrame(self.dialog, fg_color="transparent")
@@ -103,27 +91,54 @@ class PlaylistSelector:
                   command=self._on_confirm).grid(row=0, column=0, sticky=tk.E, padx=(0, 5))
         ctk.CTkButton(button_frame, text="✗ Cancel",
                   command=self.dialog.destroy).grid(row=0, column=1, sticky=tk.E)
+
+    def _populate_videos(self):
+        """Populate checkbox list and pre-select videos if initial_selected_ids provided"""
+        for idx, video in enumerate(self.videos):
+            title = video.get('title', 'Unknown')
+            var = tk.BooleanVar(value=False)
+
+            # Pre-select if this video was previously selected
+            video_id = video.get('id', '')
+            if video_id and video_id in self.initial_selected_ids:
+                var.set(True)
+
+            checkbox = ctk.CTkCheckBox(
+                self.video_scroll,
+                text=f"{idx + 1}. {title}",
+                variable=var,
+                font=('Arial', 13),
+                checkbox_width=22, checkbox_height=22
+            )
+            checkbox.grid(row=idx, column=0, sticky=tk.W, pady=2)
+            self.video_vars.append(var)
+
+        # Update select all checkbox state
+        if len(self.initial_selected_ids) == len(self.videos) and len(self.videos) > 0:
+            self.select_all_var.set(True)
     
     def _toggle_select_all(self):
         """Toggle select all videos"""
         if self.select_all_var.get():
-            self.video_listbox.select_set(0, tk.END)
+            for var in self.video_vars:
+                var.set(True)
         else:
-            self.video_listbox.select_clear(0, tk.END)
+            for var in self.video_vars:
+                var.set(False)
     
     def _clear_all(self):
         """Clear all selections"""
-        self.video_listbox.select_clear(0, tk.END)
+        for var in self.video_vars:
+            var.set(False)
         self.select_all_var.set(False)
     
     def _on_confirm(self):
         """Handle confirm button"""
-        selections = self.video_listbox.curselection()
+        selections = [idx for idx, var in enumerate(self.video_vars) if var.get()]
         if not selections:
             return
         
-        videos = self.playlist_info.get('videos', [])
-        self.selected_videos = [videos[i] for i in selections]
+        self.selected_videos = [self.videos[i] for i in selections]
         
         # Call callback with selected videos
         self.on_select(self.selected_videos)
