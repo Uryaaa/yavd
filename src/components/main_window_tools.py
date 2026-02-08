@@ -271,11 +271,12 @@ class MainWindowTools:
 
                 # Store the template command for use
                 self.current_template_command = template['command']
+                self._set_template_mode(True, template['name'])
 
                 messagebox.showinfo(
                     "Template Ready",
                     f"Template '{template['name']}' is ready.\n\n"
-                    f"Note: The template will override the standard format/quality settings.\n"
+                    f"Download settings are locked while template is active.\n"
                     f"Click Download to execute with this template."
                 )
 

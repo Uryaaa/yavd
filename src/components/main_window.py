@@ -80,6 +80,10 @@ class MainWindow(MainWindowUI, MainWindowTools):
 
         # Track if metadata has been fetched
         self.metadata_fetched = False
+        self.last_url_value = ""
+
+        # Template mode state
+        self.template_active = False
 
         # Playlist caching - avoid re-fetching same playlist
         self.cached_playlist_url = ''
@@ -103,6 +107,63 @@ class MainWindow(MainWindowUI, MainWindowTools):
         if saved_path:
             self.yt_dlp_entry.insert(0, saved_path)
 
+    def _set_section_state(self, frame, state: str):
+        """Enable/disable all interactive widgets inside a frame."""
+        try:
+            children = frame.winfo_children()
+        except Exception:
+            return
+
+        for child in children:
+            try:
+                if isinstance(child, (ctk.CTkFrame, tk.Frame)):
+                    self._set_section_state(child, state)
+                else:
+                    child.configure(state=state)
+            except Exception:
+                pass
+
+    def _set_template_mode(self, active: bool, template_name: str = ""):
+        """Toggle template mode UI and lock conflicting controls."""
+        self.template_active = active
+
+        if active:
+            label_text = f"Template active: {template_name} — download settings locked"
+            self.template_mode_label.configure(text=label_text)
+            self.template_mode_frame.grid()
+            # Lock sections that conflict with template command
+            if hasattr(self, "mode_frame"):
+                self._set_section_state(self.mode_frame, "disabled")
+            if hasattr(self, "format_frame"):
+                self._set_section_state(self.format_frame, "disabled")
+            self._set_section_state(self.quality_label_frame, "disabled")
+            self._set_section_state(self.convert_frame, "disabled")
+            self._set_section_state(self.trim_frame, "disabled")
+            if hasattr(self, "other_options_frame"):
+                self._set_section_state(self.other_options_frame, "disabled")
+            if hasattr(self, "sponsorblock_tab"):
+                self._set_section_state(self.sponsorblock_tab, "disabled")
+        else:
+            self.template_mode_frame.grid_remove()
+            if hasattr(self, "mode_frame"):
+                self._set_section_state(self.mode_frame, "normal")
+            if hasattr(self, "format_frame"):
+                self._set_section_state(self.format_frame, "normal")
+            self._set_section_state(self.quality_label_frame, "normal")
+            self._set_section_state(self.convert_frame, "normal")
+            self._set_section_state(self.trim_frame, "normal")
+            if hasattr(self, "other_options_frame"):
+                self._set_section_state(self.other_options_frame, "normal")
+            if hasattr(self, "sponsorblock_tab"):
+                self._set_section_state(self.sponsorblock_tab, "normal")
+                if hasattr(self, "_toggle_sponsorblock_controls"):
+                    self._toggle_sponsorblock_controls()
+
+    def _clear_template_mode(self):
+        """Clear active template and unlock download settings."""
+        self.current_template_command = None
+        self._set_template_mode(False)
+
 
     def _load_user_settings(self):
         """Load user settings from config and apply to UI."""
@@ -115,6 +176,8 @@ class MainWindow(MainWindowUI, MainWindowTools):
         # Mode/format/quality
         saved_mode = self.config.get('mode', '')
         if saved_mode and hasattr(self, 'mode_var'):
+            if saved_mode == "auto":
+                saved_mode = "video_audio"
             self.mode_var.set(saved_mode)
 
         saved_format = self.config.get('format', '')
@@ -361,6 +424,8 @@ class MainWindow(MainWindowUI, MainWindowTools):
         # Show format and quality sections
         self.format_label_frame.grid()
         self.quality_label_frame.grid()
+        if hasattr(self, "other_options_frame"):
+            self.other_options_frame.grid()
 
         # Show metadata frame
         self.metadata_frame.grid()
@@ -456,6 +521,8 @@ class MainWindow(MainWindowUI, MainWindowTools):
             # Show format and quality sections
             self.format_label_frame.grid()
             self.quality_label_frame.grid()
+            if hasattr(self, "other_options_frame"):
+                self.other_options_frame.grid()
 
             # Enable download button
             self.metadata_fetched = True
@@ -488,7 +555,7 @@ class MainWindow(MainWindowUI, MainWindowTools):
         audio_formats = ['m4a', 'mp3', 'wav', 'aac', 'opus', 'vorbis', 'flac', 'ogg', 'weba']
 
         # Get current mode
-        mode = self.mode_var.get() if hasattr(self, 'mode_var') else 'auto'
+        mode = self.mode_var.get() if hasattr(self, 'mode_var') else 'video_audio'
 
         # Filter formats based on mode
         filtered_formats = []
@@ -553,7 +620,7 @@ class MainWindow(MainWindowUI, MainWindowTools):
             else:
                 select_format(filtered_formats[0].lower())
         else:
-            # Prefer mp4 for video/auto
+            # Prefer mp4 for video/video+audio
             if 'mp4' in [f.lower() for f in filtered_formats]:
                 select_format('mp4')
             else:
@@ -608,13 +675,18 @@ class MainWindow(MainWindowUI, MainWindowTools):
         # Update convert format options based on mode
         self._update_convert_format_options()
 
-    def _on_url_changed(self, event=None):
+    def _on_url_changed(self, event=None, force: bool = False):
         """Handle URL entry changes for auto-fetch"""
         url = self.url_entry.get().strip()
 
         # Cancel previous timer if exists
         if self.auto_fetch_timer:
             self.root.after_cancel(self.auto_fetch_timer)
+
+        if not force and url == self.last_url_value:
+            return
+
+        self.last_url_value = url
 
         # Check if URL is valid
         if url and self.is_valid_url(url):
@@ -797,6 +869,24 @@ class MainWindow(MainWindowUI, MainWindowTools):
         convert_enabled = self.convert_enabled.get()
         convert_format = self.convert_format_var.get() if convert_enabled else ""
 
+        # Other options
+        save_thumbnail_file = self.save_thumbnail_var.get() if hasattr(self, 'save_thumbnail_var') else False
+        save_subtitles = self.save_subtitles_var.get() if hasattr(self, 'save_subtitles_var') else False
+
+        # SponsorBlock options
+        sponsorblock_enabled = self.sponsorblock_enabled.get() if hasattr(self, 'sponsorblock_enabled') else False
+        sponsorblock_mode = self.sponsorblock_mode_var.get() if hasattr(self, 'sponsorblock_mode_var') else "mark"
+        sponsorblock_categories = []
+        if sponsorblock_enabled and hasattr(self, 'sponsorblock_categories'):
+            sponsorblock_categories = [
+                key for key, var in self.sponsorblock_categories.items() if var.get()
+            ]
+            if not sponsorblock_categories:
+                messagebox.showerror("SponsorBlock", "Please select at least one category to block.")
+                self.download_btn.configure(state='normal')
+                self.status_var.set("Ready")
+                return
+
         # Check if this is a playlist download
         if self.current_metadata.get('is_playlist', False):
             selected_videos = self.current_metadata.get('selected_videos', [])
@@ -810,7 +900,12 @@ class MainWindow(MainWindowUI, MainWindowTools):
                 trim_end=trim_end,
                 mode=mode,
                 convert_enabled=convert_enabled,
-                convert_format=convert_format
+                convert_format=convert_format,
+                save_thumbnail_file=save_thumbnail_file,
+                save_subtitles=save_subtitles,
+                sponsorblock_enabled=sponsorblock_enabled,
+                sponsorblock_mode=sponsorblock_mode,
+                sponsorblock_categories=sponsorblock_categories
             )
             return
 
@@ -830,12 +925,18 @@ class MainWindow(MainWindowUI, MainWindowTools):
             on_progress=self._on_download_progress,
             mode=mode,
             convert_enabled=convert_enabled,
-            convert_format=convert_format
+            convert_format=convert_format,
+            save_thumbnail_file=save_thumbnail_file,
+            save_subtitles=save_subtitles,
+            sponsorblock_enabled=sponsorblock_enabled,
+            sponsorblock_mode=sponsorblock_mode,
+            sponsorblock_categories=sponsorblock_categories
         )
 
-    def _start_playlist_download(self, yt_dlp_path, selected_videos, output_dir, format_type, quality, trim_start, trim_end, mode, convert_enabled=False, convert_format=""):
+    def _start_playlist_download(self, yt_dlp_path, selected_videos, output_dir, format_type, quality, trim_start, trim_end, mode, convert_enabled=False, convert_format="", save_thumbnail_file=False, save_subtitles=False, sponsorblock_enabled=False, sponsorblock_mode="mark", sponsorblock_categories=None):
         """Start downloading multiple videos from a playlist"""
         import threading
+        sponsorblock_categories = sponsorblock_categories or []
 
         def download_playlist_thread():
             """Download videos in a separate thread"""
@@ -887,7 +988,12 @@ class MainWindow(MainWindowUI, MainWindowTools):
                     mode=mode,
                     is_playlist_item=True,
                     convert_enabled=convert_enabled,
-                    convert_format=convert_format
+                    convert_format=convert_format,
+                    save_thumbnail_file=save_thumbnail_file,
+                    save_subtitles=save_subtitles,
+                    sponsorblock_enabled=sponsorblock_enabled,
+                    sponsorblock_mode=sponsorblock_mode,
+                    sponsorblock_categories=sponsorblock_categories
                 )
 
                 # Wait for this video to complete
@@ -1008,8 +1114,7 @@ class MainWindow(MainWindowUI, MainWindowTools):
                 self._on_download_error(str(e))
 
             finally:
-                # Clear template after use
-                self.current_template_command = None
+                pass
 
         # Start in thread
         thread = threading.Thread(target=download_thread, daemon=True)

@@ -35,7 +35,12 @@ class Downloader:
         mode: str = "auto",
         is_playlist_item: bool = False,
         convert_enabled: bool = False,
-        convert_format: str = ""
+        convert_format: str = "",
+        save_thumbnail_file: bool = False,
+        save_subtitles: bool = False,
+        sponsorblock_enabled: bool = False,
+        sponsorblock_mode: str = "mark",
+        sponsorblock_categories: Optional[list] = None
     ):
         """
         Start download in a separate thread
@@ -53,10 +58,15 @@ class Downloader:
             on_error: Callback function when download fails
             on_download_started: Optional callback when actual download starts
             on_progress: Optional callback for progress dict with keys: 'percent', 'speed', 'eta', 'downloaded', 'total'
-            mode: Download mode ('video', 'audio', or 'auto')
+            mode: Download mode ('video', 'audio', or 'video_audio')
             is_playlist_item: Whether this is part of a playlist download
             convert_enabled: Whether to convert after download
             convert_format: Target format for conversion
+            save_thumbnail_file: Whether to save thumbnail as a file
+            save_subtitles: Whether to save subtitles
+            sponsorblock_enabled: Whether SponsorBlock removal is enabled
+            sponsorblock_mode: SponsorBlock mode ("mark" or "remove")
+            sponsorblock_categories: List of SponsorBlock categories to remove
         """
         if self.is_downloading and not is_playlist_item:
             on_error("A download is already in progress")
@@ -68,7 +78,7 @@ class Downloader:
         # Start download in separate thread
         thread = threading.Thread(
             target=self._download_thread,
-            args=(yt_dlp_path, url, output_dir, format_type, quality, trim_start, trim_end, on_log, on_complete, on_error, on_download_started, on_progress, mode, convert_enabled, convert_format),
+            args=(yt_dlp_path, url, output_dir, format_type, quality, trim_start, trim_end, on_log, on_complete, on_error, on_download_started, on_progress, mode, convert_enabled, convert_format, save_thumbnail_file, save_subtitles, sponsorblock_enabled, sponsorblock_mode, sponsorblock_categories),
             daemon=True
         )
         thread.start()
@@ -103,7 +113,12 @@ class Downloader:
         on_progress: Callable[[dict], None] = None,
         mode: str = "auto",
         convert_enabled: bool = False,
-        convert_format: str = ""
+        convert_format: str = "",
+        save_thumbnail_file: bool = False,
+        save_subtitles: bool = False,
+        sponsorblock_enabled: bool = False,
+        sponsorblock_mode: str = "mark",
+        sponsorblock_categories: Optional[list] = None
     ):
         """
         Execute download in background thread
@@ -121,19 +136,30 @@ class Downloader:
             on_error: Callback function when download fails
             on_download_started: Optional callback when actual download starts
             on_progress: Optional callback for progress dict with keys: 'percent', 'speed', 'eta', 'downloaded', 'total'
-            mode: Download mode ('video', 'audio', or 'auto')
+            mode: Download mode ('video', 'audio', or 'video_audio')
             convert_enabled: Whether to convert after download
             convert_format: Target format for conversion
+            save_thumbnail_file: Whether to save thumbnail as a file
+            save_subtitles: Whether to save subtitles
+            sponsorblock_enabled: Whether SponsorBlock removal is enabled
+            sponsorblock_mode: SponsorBlock mode ("mark" or "remove")
+            sponsorblock_categories: List of SponsorBlock categories to remove
         """
         self.is_downloading = True
         download_started = False
 
         try:
-            # Determine if we should skip embedding thumbnail (will be done after trimming)
-            skip_thumbnail_embed = bool(trim_start or trim_end)
+            # Determine if we should skip embedding thumbnail (will be done after trimming/convert for audio)
+            audio_formats = ['mp3', 'wav', 'aac', 'm4a', 'opus', 'vorbis', 'flac', 'ogg']
+            is_audio_request = (format_type.lower() in audio_formats) or (mode == "audio")
+            skip_thumbnail_embed = bool(trim_start or trim_end) or (convert_enabled and is_audio_request)
 
             # Build command based on format
-            cmd = self._build_command(yt_dlp_path, url, output_dir, format_type, quality, trim_start, trim_end, skip_thumbnail_embed, mode, convert_enabled, convert_format)
+            cmd = self._build_command(
+                yt_dlp_path, url, output_dir, format_type, quality, trim_start, trim_end,
+                skip_thumbnail_embed, mode, convert_enabled, convert_format,
+                save_thumbnail_file, save_subtitles, sponsorblock_enabled, sponsorblock_mode, sponsorblock_categories
+            )
 
             on_log(f"Executing: {' '.join(cmd)}\n")
             on_log("-" * 70)
@@ -299,7 +325,7 @@ class Downloader:
         except Exception:
             return None
 
-    def _build_command(self, yt_dlp_path: str, url: str, output_dir: str, format_type: str, quality: str, trim_start: Optional[str], trim_end: Optional[str], skip_thumbnail_embed: bool = False, mode: str = "auto", convert_enabled: bool = False, convert_format: str = "") -> list:
+    def _build_command(self, yt_dlp_path: str, url: str, output_dir: str, format_type: str, quality: str, trim_start: Optional[str], trim_end: Optional[str], skip_thumbnail_embed: bool = False, mode: str = "video_audio", convert_enabled: bool = False, convert_format: str = "", save_thumbnail_file: bool = False, save_subtitles: bool = False, sponsorblock_enabled: bool = False, sponsorblock_mode: str = "mark", sponsorblock_categories: Optional[list] = None) -> list:
         """
         Build yt-dlp command based on format type and quality
 
@@ -313,6 +339,11 @@ class Downloader:
             mode: Download mode ('video', 'audio', or 'auto')
             convert_enabled: Whether to convert after download
             convert_format: Target format for conversion
+            save_thumbnail_file: Whether to save thumbnail as a file
+            save_subtitles: Whether to save subtitles
+            sponsorblock_enabled: Whether SponsorBlock removal is enabled
+            sponsorblock_mode: SponsorBlock mode ("mark" or "remove")
+            sponsorblock_categories: List of SponsorBlock categories to remove
 
         Returns:
             List of command arguments
@@ -323,6 +354,7 @@ class Downloader:
 
         output_template = os.path.join(output_dir, "%(title)s.%(ext)s")
         format_type_lower = format_type.lower()
+        sponsorblock_categories = sponsorblock_categories or []
 
         # Audio-only formats
         audio_formats = ['mp3', 'wav', 'aac', 'm4a', 'opus', 'vorbis', 'flac', 'ogg']
@@ -355,6 +387,16 @@ class Downloader:
                         "--ppa", "ThumbnailsConvertor+ffmpeg_o:-c:v mjpeg -vf crop=\"'if(gt(ih,iw),iw,ih)':'if(gt(iw,ih),ih,iw)'\"",
                     ])
 
+            if save_thumbnail_file and "--write-thumbnail" not in cmd:
+                cmd.append("--write-thumbnail")
+
+            if save_subtitles:
+                cmd.extend(["--write-subs", "--write-auto-subs"])
+
+            if sponsorblock_enabled and sponsorblock_categories:
+                flag = "--sponsorblock-remove" if sponsorblock_mode == "remove" else "--sponsorblock-mark"
+                cmd.extend([flag, ",".join(sponsorblock_categories)])
+
             cmd.extend(["-o", output_template, url])
             return cmd
 
@@ -379,15 +421,24 @@ class Downloader:
                 "--compat-options", "no-youtube-unavailable-videos",
             ])
 
-            # Handle thumbnail based on trimming or conversion
-            # Skip thumbnail embed if trimming or converting (will be handled after FFmpeg processing)
-            skip_embed = skip_thumbnail_embed or convert_enabled
+            # Handle thumbnail based on trimming (video conversions keep embedded thumbnail)
+            skip_embed = skip_thumbnail_embed
             if skip_embed:
                 # Download thumbnail but don't embed it yet (will be embedded after processing)
                 cmd.append("--write-thumbnail")
             else:
                 # Embed thumbnail directly
                 cmd.append("--embed-thumbnail")
+
+            if save_thumbnail_file and "--write-thumbnail" not in cmd:
+                cmd.append("--write-thumbnail")
+
+            if save_subtitles:
+                cmd.extend(["--write-subs", "--write-auto-subs"])
+
+            if sponsorblock_enabled and sponsorblock_categories:
+                flag = "--sponsorblock-remove" if sponsorblock_mode == "remove" else "--sponsorblock-mark"
+                cmd.extend([flag, ",".join(sponsorblock_categories)])
 
             # Note: Conversion is now handled by FFmpeg after download, not by yt-dlp
             # This provides better control and efficiency

@@ -1,6 +1,7 @@
 """UI construction helpers for MainWindow."""
 
 import tkinter as tk
+from tkinter import messagebox
 import customtkinter as ctk
 from pathlib import Path
 
@@ -136,6 +137,7 @@ class MainWindowUI:
         self.ytdlp_tab = self.tabview.add("⚙️ Get yt-dlp")
         self.ffmpeg_tab = self.tabview.add("🎬 Get FFmpeg")
         self.templates_tab = self.tabview.add("📋 Templates")
+        self.sponsorblock_tab = self.tabview.add("🚫 Sponsorblock")
         self.log_tab = self.tabview.add("📄 Output Log")
 
         # Configure tab weights
@@ -143,6 +145,7 @@ class MainWindowUI:
         self.ytdlp_tab.columnconfigure(0, weight=1)
         self.ffmpeg_tab.columnconfigure(0, weight=1)
         self.templates_tab.columnconfigure(0, weight=1)
+        self.sponsorblock_tab.columnconfigure(0, weight=1)
         self.log_tab.columnconfigure(0, weight=1)
         self.log_tab.rowconfigure(0, weight=1)
 
@@ -184,6 +187,9 @@ class MainWindowUI:
         # Populate Templates Tab
         self._create_templates_tab_content()
 
+        # Populate Sponsorblock Tab
+        self._create_sponsorblock_tab_content()
+
         # Populate Log Tab
         self._create_log_tab_content()
 
@@ -209,6 +215,9 @@ class MainWindowUI:
 
         # Convert To Section (after Download Options)
         self._create_convert_section(self.download_scrollable)
+
+        # Other Options Section
+        self._create_other_options_section(self.download_scrollable)
 
         # Quality Selection Section
         self._create_quality_section(self.download_scrollable)
@@ -429,6 +438,163 @@ class MainWindowUI:
         ctk.CTkLabel(self.ffmpeg_tab, text=info_text, font=('Arial', 11),
                  text_color='gray').grid(row=6, column=0, sticky=tk.W)
 
+    def _create_sponsorblock_tab_content(self):
+        """Create content for Sponsorblock tab."""
+        ctk.CTkLabel(self.sponsorblock_tab, text="SponsorBlock",
+                 font=('Arial', 14, 'bold')).grid(row=0, column=0, sticky=tk.W, pady=(0, 6), padx=10)
+
+        ctk.CTkLabel(
+            self.sponsorblock_tab,
+            text="Enable SponsorBlock to remove unwanted segments during download.",
+            font=('Arial', 11),
+            text_color='gray'
+        ).grid(row=1, column=0, sticky=tk.W, pady=(0, 10), padx=10)
+
+        use_frame = ctk.CTkFrame(self.sponsorblock_tab)
+        use_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(0, 10), padx=10)
+        use_frame.columnconfigure(0, weight=1)
+
+        self.sponsorblock_enabled = tk.BooleanVar(value=False)
+        self.sponsorblock_mode_var = tk.StringVar(value="mark")
+        ctk.CTkCheckBox(
+            use_frame,
+            text="Use SponsorBlock",
+            variable=self.sponsorblock_enabled,
+            command=self._toggle_sponsorblock_controls,
+            checkbox_width=22, checkbox_height=22
+        ).grid(row=0, column=0, sticky=tk.W, padx=5, pady=6)
+
+        ctk.CTkLabel(self.sponsorblock_tab, text="Mode", font=('Arial', 12, 'bold')).grid(
+            row=3, column=0, sticky=tk.W, pady=(0, 6), padx=10)
+
+        mode_frame = ctk.CTkFrame(self.sponsorblock_tab)
+        mode_frame.grid(row=4, column=0, sticky=(tk.W, tk.E), pady=(0, 10), padx=10)
+        mode_frame.columnconfigure(0, weight=1)
+
+        self.sponsorblock_mode_vars = {
+            "mark": tk.BooleanVar(value=True),
+            "remove": tk.BooleanVar(value=False),
+        }
+
+        def select_sb_mode(mode: str):
+            for key, var in self.sponsorblock_mode_vars.items():
+                var.set(key == mode)
+            self.sponsorblock_mode_var.set(mode)
+            self._toggle_sponsorblock_controls()
+
+        self.sponsorblock_mode_checkboxes = [
+            ctk.CTkCheckBox(
+                mode_frame,
+                text="Mark segments",
+                variable=self.sponsorblock_mode_vars["mark"],
+                command=lambda: select_sb_mode("mark"),
+                checkbox_width=22, checkbox_height=22
+            ),
+            ctk.CTkCheckBox(
+                mode_frame,
+                text="Remove segments",
+                variable=self.sponsorblock_mode_vars["remove"],
+                command=lambda: select_sb_mode("remove"),
+                checkbox_width=22, checkbox_height=22
+            )
+        ]
+
+        self._schedule_option_layout(mode_frame, self.sponsorblock_mode_checkboxes, min_col_width=200)
+        mode_frame.bind(
+            "<Configure>",
+            lambda e: self._schedule_option_layout(mode_frame, self.sponsorblock_mode_checkboxes, min_col_width=200)
+        )
+
+        warn_text = ("Remove mode edits the media file and can break subtitle saving. "
+                     "Subtitles will be disabled when remove is selected.")
+        self.sponsorblock_warning_label = ctk.CTkLabel(
+            self.sponsorblock_tab,
+            text=warn_text,
+            font=('Arial', 10),
+            text_color='gray'
+        )
+        self.sponsorblock_warning_label.grid(row=5, column=0, sticky=tk.W, pady=(0, 10), padx=10)
+
+        options_frame = ctk.CTkFrame(self.sponsorblock_tab)
+        options_frame.grid(row=6, column=0, sticky=(tk.W, tk.E), pady=(0, 10), padx=10)
+        options_frame.columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(options_frame, text="Block categories:", font=('Arial', 12, 'bold')).grid(
+            row=0, column=0, sticky=tk.W, padx=5, pady=(5, 6))
+
+        self.sponsorblock_categories_frame = ctk.CTkFrame(options_frame, fg_color="transparent")
+        self.sponsorblock_categories_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), padx=5, pady=(0, 8))
+
+        self.sponsorblock_categories = {
+            "sponsor": tk.BooleanVar(value=True),
+            "intro": tk.BooleanVar(value=False),
+            "outro": tk.BooleanVar(value=False),
+            "selfpromo": tk.BooleanVar(value=False),
+            "interaction": tk.BooleanVar(value=False),
+            "preview": tk.BooleanVar(value=False),
+            "music_offtopic": tk.BooleanVar(value=False),
+            "filler": tk.BooleanVar(value=False),
+        }
+
+        self.sponsorblock_checkboxes = []
+        for label, key in [
+            ("Sponsor", "sponsor"),
+            ("Intro", "intro"),
+            ("Outro", "outro"),
+            ("Self Promo", "selfpromo"),
+            ("Interaction", "interaction"),
+            ("Preview", "preview"),
+            ("Music Offtopic", "music_offtopic"),
+            ("Filler", "filler"),
+        ]:
+            checkbox = ctk.CTkCheckBox(
+                self.sponsorblock_categories_frame,
+                text=label,
+                variable=self.sponsorblock_categories[key],
+                checkbox_width=22, checkbox_height=22
+            )
+            self.sponsorblock_checkboxes.append(checkbox)
+
+        self._schedule_option_layout(self.sponsorblock_categories_frame, self.sponsorblock_checkboxes, min_col_width=160)
+        self.sponsorblock_categories_frame.bind(
+            "<Configure>",
+            lambda e: self._schedule_option_layout(self.sponsorblock_categories_frame, self.sponsorblock_checkboxes, min_col_width=160)
+        )
+
+        self._toggle_sponsorblock_controls()
+
+    def _toggle_sponsorblock_controls(self):
+        """Enable/disable SponsorBlock category options."""
+        state = "normal" if self.sponsorblock_enabled.get() else "disabled"
+        for checkbox in getattr(self, "sponsorblock_checkboxes", []):
+            try:
+                checkbox.configure(state=state)
+            except Exception:
+                pass
+
+        # Toggle mode checkboxes
+        for checkbox in getattr(self, "sponsorblock_mode_checkboxes", []):
+            try:
+                checkbox.configure(state=state)
+            except Exception:
+                pass
+
+        # Disable subtitles when removing segments
+        if hasattr(self, "save_subtitles_checkbox"):
+            if self.sponsorblock_enabled.get() and self.sponsorblock_mode_var.get() == "remove":
+                self.save_subtitles_var.set(False)
+                self.save_subtitles_checkbox.configure(state="disabled")
+                if not getattr(self, "_sponsorblock_subs_warned", False):
+                    messagebox.showwarning(
+                        "SponsorBlock",
+                        "Remove mode edits the media file and can conflict with subtitles.\n"
+                        "Save subtitles has been disabled."
+                    )
+                    self._sponsorblock_subs_warned = True
+            else:
+                self.save_subtitles_checkbox.configure(state="normal")
+                self._sponsorblock_subs_warned = False
+
     def _create_templates_tab_content(self):
         """Create content for Templates tab"""
         # Configure templates tab grid weights
@@ -614,10 +780,18 @@ class MainWindowUI:
         self.url_entry.grid(row=0, column=0, sticky=(tk.W, tk.E), padx=(0, 3))
         # Bind events for auto-fetch
         self.url_entry.bind('<KeyRelease>', self._on_url_changed)
-        # Also bind Ctrl+V for paste events
-        self.url_entry.bind('<Control-v>', self._on_url_changed)
+        # Paste events (after entry updates)
+        self.url_entry.bind('<<Paste>>', self._on_url_paste)
+        self.url_entry.bind('<Control-v>', self._on_url_paste)
+        # Bind to internal entry for CTkEntry paste reliability
+        try:
+            internal_entry = self.url_entry._entry
+            internal_entry.bind('<<Paste>>', self._on_url_paste)
+            internal_entry.bind('<Control-v>', self._on_url_paste)
+        except Exception:
+            pass
         # Add context menu with paste callback for auto-fetch
-        ContextMenu(self.url_entry, on_paste_callback=self._on_url_changed)
+        ContextMenu(self.url_entry, on_paste_callback=self._on_url_paste)
 
         paste_btn = ctk.CTkButton(url_frame, text="📋 Paste", command=self.paste_url)
         paste_btn.grid(row=0, column=1, padx=(0, 3))
@@ -641,6 +815,13 @@ class MainWindowUI:
             justify=tk.LEFT
         )
         instruction_label.grid(row=2, column=0, sticky=tk.W, pady=(0, 5))
+
+    def _on_url_paste(self, event=None):
+        """Handle paste events after entry updates."""
+        try:
+            self.root.after(10, lambda: self._on_url_changed(force=True))
+        except Exception:
+            self._on_url_changed(force=True)
 
     def _create_metadata_section(self, parent):
         """Create video metadata display section"""
@@ -811,7 +992,7 @@ class MainWindowUI:
             except Exception:
                 pass
 
-        mode = self.mode_var.get() if hasattr(self, 'mode_var') else 'auto'
+        mode = self.mode_var.get() if hasattr(self, 'mode_var') else 'video_audio'
 
         # Choose formats based on mode
         if mode == 'audio':
@@ -877,6 +1058,45 @@ class MainWindowUI:
         browse_btn = ctk.CTkButton(output_frame, text="📁 Browse...", command=self.browse_output)
         browse_btn.grid(row=0, column=1)
 
+    def _create_other_options_section(self, parent):
+        """Create other options section."""
+        self.other_options_frame = ctk.CTkFrame(parent)
+        self.other_options_frame.grid(row=8, column=0, sticky=(tk.W, tk.E), pady=(0, 8))
+        self.other_options_frame.columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(self.other_options_frame, text="⚙️ Other Options", font=('Arial', 13, 'bold')).grid(
+            row=0, column=0, sticky=tk.W, pady=(5, 5), padx=5)
+
+        options_frame = ctk.CTkFrame(self.other_options_frame, fg_color="transparent")
+        options_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), padx=5, pady=(0, 5))
+
+        self.save_thumbnail_var = tk.BooleanVar(value=False)
+        self.save_subtitles_var = tk.BooleanVar(value=False)
+
+        self.other_option_checkboxes = [
+            ctk.CTkCheckBox(
+                options_frame,
+                text="Save thumbnail as a file",
+                variable=self.save_thumbnail_var,
+                checkbox_width=22, checkbox_height=22
+            ),
+            ctk.CTkCheckBox(
+                options_frame,
+                text="Save subtitles",
+                variable=self.save_subtitles_var,
+                checkbox_width=22, checkbox_height=22
+            ),
+        ]
+        self.save_subtitles_checkbox = self.other_option_checkboxes[1]
+
+        self._schedule_option_layout(options_frame, self.other_option_checkboxes, min_col_width=220)
+        options_frame.bind(
+            "<Configure>",
+            lambda e: self._schedule_option_layout(options_frame, self.other_option_checkboxes, min_col_width=220)
+        )
+
+        self.other_options_frame.grid_remove()
+
     def _create_format_section(self, parent):
         """Create format selection section"""
         # Label frame for format and mode selection
@@ -884,25 +1104,47 @@ class MainWindowUI:
         self.format_label_frame.grid(row=6, column=0, sticky=(tk.W, tk.E), pady=(0, 8))
         self.format_label_frame.columnconfigure(0, weight=1)
 
+        # Template mode banner (hidden until a template is active)
+        self.template_mode_frame = ctk.CTkFrame(self.format_label_frame)
+        self.template_mode_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(5, 6), padx=5)
+        self.template_mode_frame.columnconfigure(0, weight=1)
+        self.template_mode_frame.columnconfigure(1, weight=0)
+
+        self.template_mode_label = ctk.CTkLabel(
+            self.template_mode_frame,
+            text="Template active.",
+            font=('Arial', 11)
+        )
+        self.template_mode_label.grid(row=0, column=0, sticky=tk.W, padx=8, pady=6)
+
+        self.template_mode_clear_btn = ctk.CTkButton(
+            self.template_mode_frame,
+            text="Clear Template",
+            command=self._clear_template_mode
+        )
+        self.template_mode_clear_btn.grid(row=0, column=1, sticky=tk.E, padx=8, pady=6)
+
+        self.template_mode_frame.grid_remove()
+
         ctk.CTkLabel(self.format_label_frame, text="🎬 Download Options", font=('Arial', 13, 'bold')).grid(
-            row=0, column=0, sticky=tk.W, pady=(5, 5), padx=5)
+            row=1, column=0, sticky=tk.W, pady=(0, 5), padx=5)
 
-        # Mode selection (Video Only, Audio Only, Auto)
-        mode_frame = ctk.CTkFrame(self.format_label_frame)
-        mode_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 5), padx=5)
-        mode_frame.columnconfigure(1, weight=1)
+        # Mode selection (Video+Audio, Video Only, Audio Only)
+        self.mode_frame = ctk.CTkFrame(self.format_label_frame)
+        self.mode_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(0, 5), padx=5)
+        self.mode_frame.columnconfigure(1, weight=1)
 
-        ctk.CTkLabel(mode_frame, text="Mode:", font=('Arial', 11, 'bold')).grid(
+        ctk.CTkLabel(self.mode_frame, text="Mode:", font=('Arial', 11, 'bold')).grid(
             row=0, column=0, sticky=tk.W, padx=(0, 8))
 
-        self.mode_options_frame = ctk.CTkFrame(mode_frame, fg_color="transparent")
+        self.mode_options_frame = ctk.CTkFrame(self.mode_frame, fg_color="transparent")
         self.mode_options_frame.grid(row=0, column=1, sticky=(tk.W, tk.E))
 
-        self.mode_var = tk.StringVar(value="auto")
+        self.mode_var = tk.StringVar(value="video_audio")
         self.mode_vars = {
+            "video_audio": tk.BooleanVar(value=True),
             "video": tk.BooleanVar(value=False),
             "audio": tk.BooleanVar(value=False),
-            "auto": tk.BooleanVar(value=True),
         }
 
         def select_mode(mode: str):
@@ -914,7 +1156,14 @@ class MainWindowUI:
         self.mode_checkboxes = []
         self.mode_checkboxes.append(ctk.CTkCheckBox(
             self.mode_options_frame,
-            text="🎥 Video",
+            text="🎬 Video + Audio",
+            variable=self.mode_vars["video_audio"],
+            command=lambda: select_mode("video_audio"),
+            checkbox_width=22, checkbox_height=22
+        ))
+        self.mode_checkboxes.append(ctk.CTkCheckBox(
+            self.mode_options_frame,
+            text="🎥 Video Only",
             variable=self.mode_vars["video"],
             command=lambda: select_mode("video"),
             checkbox_width=22, checkbox_height=22
@@ -926,13 +1175,6 @@ class MainWindowUI:
             command=lambda: select_mode("audio"),
             checkbox_width=22, checkbox_height=22
         ))
-        self.mode_checkboxes.append(ctk.CTkCheckBox(
-            self.mode_options_frame,
-            text="⚙️ Auto",
-            variable=self.mode_vars["auto"],
-            command=lambda: select_mode("auto"),
-            checkbox_width=22, checkbox_height=22
-        ))
 
         self._schedule_option_layout(self.mode_options_frame, self.mode_checkboxes, min_col_width=160)
         self.mode_options_frame.bind(
@@ -941,16 +1183,16 @@ class MainWindowUI:
         )
 
         # Format selection
-        format_frame = ctk.CTkFrame(self.format_label_frame)
-        format_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(0, 5), padx=5)
-        format_frame.columnconfigure(1, weight=1)
+        self.format_frame = ctk.CTkFrame(self.format_label_frame)
+        self.format_frame.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=(0, 5), padx=5)
+        self.format_frame.columnconfigure(1, weight=1)
 
-        ctk.CTkLabel(format_frame, text="Format:", font=('Arial', 11, 'bold')).grid(
+        ctk.CTkLabel(self.format_frame, text="Format:", font=('Arial', 11, 'bold')).grid(
             row=0, column=0, sticky=tk.W, padx=(0, 8))
 
         self.format_var = tk.StringVar(value="mp4")
         self.format_radios = []
-        self.format_radio_frame = ctk.CTkFrame(format_frame, fg_color="transparent")
+        self.format_radio_frame = ctk.CTkFrame(self.format_frame, fg_color="transparent")
         self.format_radio_frame.grid(row=0, column=1, sticky=(tk.W, tk.E))
         self._update_format_options(['MP4', 'MP3'])
 
@@ -960,7 +1202,7 @@ class MainWindowUI:
     def _create_quality_section(self, parent):
         """Create quality selection section"""
         self.quality_label_frame = ctk.CTkFrame(parent)
-        self.quality_label_frame.grid(row=8, column=0, sticky=(tk.W, tk.E), pady=(0, 8))
+        self.quality_label_frame.grid(row=9, column=0, sticky=(tk.W, tk.E), pady=(0, 8))
         self.quality_label_frame.columnconfigure(0, weight=1)
 
         ctk.CTkLabel(self.quality_label_frame, text="⭐ Quality & Resolution", font=('Arial', 13, 'bold')).grid(
@@ -1004,7 +1246,7 @@ class MainWindowUI:
         """Create download button and progress bar"""
         # Button frame for Download and Cancel buttons
         button_frame = ctk.CTkFrame(parent, fg_color="transparent")
-        button_frame.grid(row=9, column=0, pady=(0, 5), sticky=(tk.W, tk.E))
+        button_frame.grid(row=10, column=0, pady=(0, 5), sticky=(tk.W, tk.E))
         button_frame.columnconfigure(0, weight=1)
         button_frame.columnconfigure(1, weight=0)
 
@@ -1021,7 +1263,7 @@ class MainWindowUI:
 
         # Progress bar frame (below buttons, hidden initially)
         self.download_progress_frame = ctk.CTkFrame(parent)
-        self.download_progress_frame.grid(row=10, column=0, sticky=(tk.W, tk.E), pady=(5, 8))
+        self.download_progress_frame.grid(row=11, column=0, sticky=(tk.W, tk.E), pady=(5, 8))
         self.download_progress_frame.columnconfigure(0, weight=1)
 
         self.download_progress_label = ctk.CTkLabel(self.download_progress_frame, text="",
