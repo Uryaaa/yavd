@@ -16,8 +16,11 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[(_icon_path, ".")] if os.path.exists(_icon_path) else [],
+    datas=([(_icon_path, ".")] if os.path.exists(_icon_path) else []) + [
+        (os.path.join(_spec_dir, "src", "themes", "yav_theme.json"), os.path.join("src", "themes"))
+    ],
     hiddenimports=[
+        'customtkinter',
         'PIL._tkinter_finder',
         'tkinter',
         'tkinter.ttk',
