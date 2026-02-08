@@ -93,7 +93,6 @@ class MainWindow(MainWindowUI, MainWindowTools):
 
         # Create UI
         self.create_widgets()
-        self._bind_global_mousewheel()
 
         # Load saved settings
         self._load_user_settings()
@@ -104,98 +103,6 @@ class MainWindow(MainWindowUI, MainWindowTools):
         if saved_path:
             self.yt_dlp_entry.insert(0, saved_path)
 
-    def _find_scrollable_parent(self, widget):
-        """Find nearest CTkScrollableFrame parent for a widget."""
-        current = widget
-        while current is not None:
-            try:
-                if isinstance(current, ctk.CTkScrollableFrame):
-                    return current
-            except Exception:
-                pass
-            try:
-                current = current.master
-            except Exception:
-                break
-        return None
-
-    def _get_active_tab_scrollable(self):
-        """Fallback scroll target based on active tab."""
-        try:
-            tab_name = self.tabview.get()
-        except Exception:
-            return None
-
-        if tab_name == "📥 Download":
-            return getattr(self, "download_scrollable", None)
-        if tab_name == "📋 Templates":
-            return getattr(self, "templates_right_scroll", None)
-        return None
-
-    def _bind_global_mousewheel(self):
-        """Enable mouse wheel scrolling anywhere in the window."""
-        scroll_lines = 3
-
-        def _scroll_widget(widget, lines):
-            try:
-                widget.yview_scroll(lines, "units")
-                return True
-            except Exception:
-                return False
-
-        def _on_mousewheel(event):
-            delta = event.delta
-            if delta == 0:
-                return None
-
-            # Prefer native scroll for text-like widgets
-            try:
-                if event.widget.winfo_class() in ("Text", "Listbox", "Canvas"):
-                    lines = -1 * int(delta / 120) * scroll_lines
-                    if lines == 0:
-                        lines = -scroll_lines if delta > 0 else scroll_lines
-                    if _scroll_widget(event.widget, lines):
-                        return "break"
-            except Exception:
-                pass
-
-            target = self._find_scrollable_parent(event.widget)
-            if target is None:
-                target = self._get_active_tab_scrollable()
-            if target is None:
-                return None
-
-            canvas = getattr(target, "_parent_canvas", None) or getattr(target, "_canvas", None)
-            if canvas and canvas.winfo_exists():
-                lines = -1 * int(delta / 120) * scroll_lines
-                if lines == 0:
-                    lines = -scroll_lines if delta > 0 else scroll_lines
-                try:
-                    canvas.yview_scroll(lines, "units")
-                    return "break"
-                except Exception:
-                    return None
-            return None
-
-        def _on_linux_scroll(event):
-            lines = -scroll_lines if event.num == 4 else scroll_lines
-            target = self._find_scrollable_parent(event.widget)
-            if target is None:
-                target = self._get_active_tab_scrollable()
-            if target is None:
-                return None
-            canvas = getattr(target, "_parent_canvas", None) or getattr(target, "_canvas", None)
-            if canvas and canvas.winfo_exists():
-                try:
-                    canvas.yview_scroll(lines, "units")
-                    return "break"
-                except Exception:
-                    return None
-            return None
-
-        self.root.bind_all("<MouseWheel>", _on_mousewheel, add="+")
-        self.root.bind_all("<Button-4>", _on_linux_scroll, add="+")
-        self.root.bind_all("<Button-5>", _on_linux_scroll, add="+")
 
     def _load_user_settings(self):
         """Load user settings from config and apply to UI."""
