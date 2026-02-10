@@ -152,7 +152,10 @@ class Downloader:
             # Determine if we should skip embedding thumbnail (will be done after trimming/convert for audio)
             audio_formats = ['mp3', 'wav', 'aac', 'm4a', 'opus', 'vorbis', 'flac', 'ogg']
             is_audio_request = (format_type.lower() in audio_formats) or (mode == "audio")
-            skip_thumbnail_embed = bool(trim_start or trim_end) or (convert_enabled and is_audio_request)
+            # Skip embed when trimming; if converting, skip for non-opus audio so we can embed after convert
+            skip_thumbnail_embed = bool(trim_start or trim_end) or (
+                convert_enabled and is_audio_request and format_type.lower() != "opus"
+            )
 
             # Build command based on format
             cmd = self._build_command(
@@ -612,8 +615,8 @@ class Downloader:
                     "-disposition:v", "attached_pic",
                     output_file
                 ]
-            elif ext_lower in ['.flac', '.ogg', '.opus']:
-                # For FLAC/OGG/Opus, preserve original audio codec, copy thumbnail
+            elif ext_lower in ['.flac']:
+                # For FLAC, preserve original audio codec, copy thumbnail
                 cmd = [
                     "ffmpeg", "-y",
                     "-i", input_file,
@@ -625,6 +628,10 @@ class Downloader:
                     "-disposition:v", "attached_pic",
                     output_file
                 ]
+            elif ext_lower in ['.ogg', '.opus']:
+                # Let yt-dlp handle opus/ogg embedding; skip manual embed
+                on_log(f"Skipping manual thumbnail embed for {ext_lower} (handled by yt-dlp)")
+                return True
             elif ext_lower in ['.wav']:
                 # For WAV, we need to convert thumbnail to appropriate format
                 # WAV doesn't support embedded thumbnails in standard way, so we'll skip
@@ -708,7 +715,7 @@ class Downloader:
             ext_lower = ext.lower()
             
             # Define which formats support embedded thumbnails
-            audio_formats_with_thumbnails = ['.mp3', '.aac', '.m4a', '.flac', '.opus', '.ogg']
+            audio_formats_with_thumbnails = ['.mp3', '.aac', '.m4a', '.flac']
             is_audio_with_thumbnail_support = ext_lower in audio_formats_with_thumbnails
 
             # Find thumbnail file downloaded by yt-dlp (if trimming was enabled)
@@ -1034,8 +1041,8 @@ class Downloader:
                 except Exception as e:
                     on_log(f"⚠ Could not remove original file: {str(e)}")
 
-                # Embed thumbnail for audio formats that support it
-                audio_formats_with_thumbnails = ['mp3', 'aac', 'm4a', 'flac', 'opus', 'ogg']
+                # Embed thumbnail for audio formats that support it (let yt-dlp handle opus/ogg)
+                audio_formats_with_thumbnails = ['mp3', 'aac', 'm4a', 'flac']
                 if target_format_lower in audio_formats_with_thumbnails and thumbnail_file:
                     success = self._embed_thumbnail(output_file, thumbnail_file, on_log)
                     if not success:
