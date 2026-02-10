@@ -149,13 +149,17 @@ class Downloader:
         download_started = False
 
         try:
-            # Determine if we should skip embedding thumbnail (will be done after trimming/convert for audio)
+            # Determine if we should skip embedding thumbnail (handled after trimming/convert for audio)
             audio_formats = ['mp3', 'wav', 'aac', 'm4a', 'opus', 'vorbis', 'flac', 'ogg']
             is_audio_request = (format_type.lower() in audio_formats) or (mode == "audio")
+            audio_target = (convert_format.lower() if convert_enabled and convert_format else format_type.lower())
             # Skip embed when trimming; if converting, skip for non-opus audio so we can embed after convert
             skip_thumbnail_embed = bool(trim_start or trim_end) or (
-                convert_enabled and is_audio_request and format_type.lower() != "opus"
+                convert_enabled and is_audio_request and audio_target != "opus"
             )
+            # For opus without trimming, always let yt-dlp embed the thumbnail (matches working CLI)
+            if audio_target == "opus" and not trim_start and not trim_end:
+                skip_thumbnail_embed = False
 
             # Build command based on format
             cmd = self._build_command(
@@ -242,7 +246,8 @@ class Downloader:
                         processing_failed = True
 
                 # If conversion is enabled, convert with FFmpeg
-                if current_file and convert_enabled and convert_format and not processing_failed:
+                # Skip for Opus audio (let yt-dlp embed thumbnail directly)
+                if current_file and convert_enabled and convert_format and not processing_failed and not (is_audio_request and audio_target == "opus"):
                     on_log("-" * 70)
                     on_log("Starting conversion with FFmpeg...")
 

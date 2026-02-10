@@ -80,7 +80,6 @@ class MainWindow(MainWindowUI, MainWindowTools):
 
         # Track if metadata has been fetched
         self.metadata_fetched = False
-        self.last_url_value = ""
 
         # Template mode state
         self.template_active = False
@@ -173,62 +172,7 @@ class MainWindow(MainWindowUI, MainWindowTools):
             self.output_entry.delete(0, tk.END)
             self.output_entry.insert(0, saved_output)
 
-        # Mode/format/quality
-        saved_mode = self.config.get('mode', '')
-        if saved_mode and hasattr(self, 'mode_var'):
-            if saved_mode == "auto":
-                saved_mode = "video_audio"
-            self.mode_var.set(saved_mode)
-
-        saved_format = self.config.get('format', '')
-        if saved_format and hasattr(self, 'format_var'):
-            self.format_var.set(saved_format)
-
-        saved_quality = self.config.get('quality', '')
-        if saved_quality and hasattr(self, 'quality_var'):
-            self.quality_var.set(saved_quality)
-
-        saved_audio_bitrate = self.config.get('audio_bitrate', '')
-        if saved_audio_bitrate and hasattr(self, 'audio_bitrate_var'):
-            self.audio_bitrate_var.set(saved_audio_bitrate)
-
-        # Convert settings
-        if hasattr(self, 'convert_enabled'):
-            self.convert_enabled.set(bool(self.config.get('convert_enabled', False)))
-        saved_convert_format = self.config.get('convert_format', '')
-        if saved_convert_format and hasattr(self, 'convert_format_var'):
-            self.convert_format_var.set(saved_convert_format)
-
-        # Trim settings
-        if hasattr(self, 'trim_enabled'):
-            self.trim_enabled.set(bool(self.config.get('trim_enabled', False)))
-        saved_trim_start = self.config.get('trim_start', '')
-        if saved_trim_start:
-            self.trim_start_entry.delete(0, tk.END)
-            self.trim_start_entry.insert(0, saved_trim_start)
-        saved_trim_end = self.config.get('trim_end', '')
-        if saved_trim_end:
-            self.trim_end_entry.delete(0, tk.END)
-            self.trim_end_entry.insert(0, saved_trim_end)
-
-        # Save location for yt-dlp/ffmpeg download tabs
-        saved_ytdlp_save = self.config.get('ytdlp_save_path', '')
-        if saved_ytdlp_save and hasattr(self, 'ytdlp_save_entry'):
-            self.ytdlp_save_entry.delete(0, tk.END)
-            self.ytdlp_save_entry.insert(0, saved_ytdlp_save)
-
-        saved_ffmpeg_save = self.config.get('ffmpeg_save_path', '')
-        if saved_ffmpeg_save and hasattr(self, 'ffmpeg_save_entry'):
-            self.ffmpeg_save_entry.delete(0, tk.END)
-            self.ffmpeg_save_entry.insert(0, saved_ffmpeg_save)
-
-        # Apply UI state changes after loading
-        try:
-            self._on_mode_changed()
-            self._toggle_convert_controls()
-            self._toggle_trim_controls()
-        except Exception:
-            pass
+        # No other persistent settings
 
     def _bind_setting_savers(self):
         """Bind UI changes to persist settings."""
@@ -238,43 +182,13 @@ class MainWindow(MainWindowUI, MainWindowTools):
         self.output_entry.bind("<FocusOut>", save_output_dir)
         self.output_entry.bind("<Return>", save_output_dir)
 
-        if hasattr(self, 'mode_var'):
-            self.mode_var.trace_add("write", lambda *_: self.config.set('mode', self.mode_var.get()))
-        if hasattr(self, 'format_var'):
-            self.format_var.trace_add("write", lambda *_: self.config.set('format', self.format_var.get()))
-        if hasattr(self, 'quality_var'):
-            self.quality_var.trace_add("write", lambda *_: self.config.set('quality', self.quality_var.get()))
-        if hasattr(self, 'audio_bitrate_var'):
-            self.audio_bitrate_var.trace_add("write", lambda *_: self.config.set('audio_bitrate', self.audio_bitrate_var.get()))
-        if hasattr(self, 'convert_enabled'):
-            self.convert_enabled.trace_add("write", lambda *_: self.config.set('convert_enabled', bool(self.convert_enabled.get())))
-        if hasattr(self, 'convert_format_var'):
-            self.convert_format_var.trace_add("write", lambda *_: self.config.set('convert_format', self.convert_format_var.get()))
-        if hasattr(self, 'trim_enabled'):
-            self.trim_enabled.trace_add("write", lambda *_: self.config.set('trim_enabled', bool(self.trim_enabled.get())))
+        def save_ytdlp_path(_event=None):
+            self.config.set('yt_dlp_path', self.yt_dlp_entry.get().strip())
 
-        def save_trim_times(_event=None):
-            self.config.set('trim_start', self.trim_start_entry.get())
-            self.config.set('trim_end', self.trim_end_entry.get())
+        self.yt_dlp_entry.bind("<FocusOut>", save_ytdlp_path)
+        self.yt_dlp_entry.bind("<Return>", save_ytdlp_path)
 
-        self.trim_start_entry.bind("<FocusOut>", save_trim_times)
-        self.trim_end_entry.bind("<FocusOut>", save_trim_times)
-
-        def save_ytdlp_save(_event=None):
-            if hasattr(self, 'ytdlp_save_entry'):
-                self.config.set('ytdlp_save_path', self.ytdlp_save_entry.get().strip())
-
-        if hasattr(self, 'ytdlp_save_entry'):
-            self.ytdlp_save_entry.bind("<FocusOut>", save_ytdlp_save)
-            self.ytdlp_save_entry.bind("<Return>", save_ytdlp_save)
-
-        def save_ffmpeg_save(_event=None):
-            if hasattr(self, 'ffmpeg_save_entry'):
-                self.config.set('ffmpeg_save_path', self.ffmpeg_save_entry.get().strip())
-
-        if hasattr(self, 'ffmpeg_save_entry'):
-            self.ffmpeg_save_entry.bind("<FocusOut>", save_ffmpeg_save)
-            self.ffmpeg_save_entry.bind("<Return>", save_ffmpeg_save)
+        # No other persistent settings
 
     def _handle_tk_error(self, exc_type, exc_value, exc_tb):
         """Handle Tk callback exceptions, suppressing known CTk resize errors."""
@@ -675,33 +589,7 @@ class MainWindow(MainWindowUI, MainWindowTools):
         # Update convert format options based on mode
         self._update_convert_format_options()
 
-    def _on_url_changed(self, event=None, force: bool = False):
-        """Handle URL entry changes for auto-fetch"""
-        url = self.url_entry.get().strip()
-
-        # Cancel previous timer if exists
-        if self.auto_fetch_timer:
-            self.root.after_cancel(self.auto_fetch_timer)
-
-        if not force and url == self.last_url_value:
-            return
-
-        self.last_url_value = url
-
-        # Check if URL is valid
-        if url and self.is_valid_url(url):
-            # Schedule auto-fetch after 1 second of no typing
-            self.auto_fetch_timer = self.root.after(1000, self.fetch_video_info)
-        else:
-            # Hide format/quality sections if URL is invalid
-            if not url:
-                self.format_label_frame.grid_remove()
-                self.quality_label_frame.grid_remove()
-                self.metadata_frame.grid_remove()
-                self.trim_frame.grid_remove()
-                self.convert_frame.grid_remove()
-                self.download_btn.configure(state='disabled')
-                self.metadata_fetched = False
+    # Playlist handling occurs automatically after fetch when a playlist URL is detected.
 
     def _toggle_trim_controls(self):
         """Toggle trim control states"""
@@ -723,6 +611,29 @@ class MainWindow(MainWindowUI, MainWindowTools):
         self.output_text.insert(tk.END, message + "\n")
         self.output_text.see(tk.END)
         self.output_text.configure(state='disabled')
+
+    def _copy_log(self):
+        """Copy all log text to clipboard."""
+        try:
+            text = self.output_text.get("1.0", tk.END).strip()
+            if not text:
+                messagebox.showinfo("Copy Log", "Log is empty.")
+                return
+            self.root.clipboard_clear()
+            self.root.clipboard_append(text)
+            self.root.update()
+            messagebox.showinfo("Copy Log", "Log copied to clipboard.")
+        except tk.TclError:
+            messagebox.showerror("Copy Log", "Failed to copy log.")
+
+    def _clear_log(self):
+        """Clear output log."""
+        try:
+            self.output_text.configure(state='normal')
+            self.output_text.delete("1.0", tk.END)
+            self.output_text.configure(state='disabled')
+        except tk.TclError:
+            messagebox.showerror("Clear Log", "Failed to clear log.")
 
     @staticmethod
     def is_valid_url(url: str) -> bool:

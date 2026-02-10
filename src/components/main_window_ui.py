@@ -778,50 +778,29 @@ class MainWindowUI:
 
         self.url_entry = ctk.CTkEntry(url_frame, width=50, font=('Arial', 12))
         self.url_entry.grid(row=0, column=0, sticky=(tk.W, tk.E), padx=(0, 3))
-        # Bind events for auto-fetch
-        self.url_entry.bind('<KeyRelease>', self._on_url_changed)
-        # Paste events (after entry updates)
-        self.url_entry.bind('<<Paste>>', self._on_url_paste)
-        self.url_entry.bind('<Control-v>', self._on_url_paste)
-        # Bind to internal entry for CTkEntry paste reliability
-        try:
-            internal_entry = self.url_entry._entry
-            internal_entry.bind('<<Paste>>', self._on_url_paste)
-            internal_entry.bind('<Control-v>', self._on_url_paste)
-        except Exception:
-            pass
-        # Add context menu with paste callback for auto-fetch
-        ContextMenu(self.url_entry, on_paste_callback=self._on_url_paste)
+        # Add context menu (no auto-fetch)
+        ContextMenu(self.url_entry)
 
         paste_btn = ctk.CTkButton(url_frame, text="📋 Paste", command=self.paste_url)
         paste_btn.grid(row=0, column=1, padx=(0, 3))
 
-        fetch_btn = ctk.CTkButton(url_frame, text="ℹ️ Fetch Info", command=self.fetch_video_info)
+        fetch_btn = ctk.CTkButton(url_frame, text="▶️ Go", command=self.fetch_video_info)
         fetch_btn.grid(row=0, column=2)
 
-        # Store fetch button for later reference
+        # Store buttons for later reference
         self.fetch_btn = fetch_btn
-
-        # Auto-fetch timer
-        self.auto_fetch_timer = None
+        self.playlist_btn = None
 
         # Instruction label
         instruction_label = ctk.CTkLabel(
             parent,
-            text="💡 Tip: Paste a video URL - it will auto-fetch info automatically. If auto-fetch doesn't work, click 'Fetch Info' to manually fetch available formats, resolutions, and framerates",
+            text="Tip: Click “Go” to fetch video info and formats. Playlist URLs will show a selector after fetching.",
             font=('Arial', 10),
             text_color='gray',
-            wraplength=400,
+            wraplength=420,
             justify=tk.LEFT
         )
         instruction_label.grid(row=2, column=0, sticky=tk.W, pady=(0, 5))
-
-    def _on_url_paste(self, event=None):
-        """Handle paste events after entry updates."""
-        try:
-            self.root.after(10, lambda: self._on_url_changed(force=True))
-        except Exception:
-            self._on_url_changed(force=True)
 
     def _create_metadata_section(self, parent):
         """Create video metadata display section"""
@@ -958,7 +937,7 @@ class MainWindowUI:
         self.convert_format_var = tk.StringVar(value="mp4")
 
         # Video formats
-        self.video_convert_formats = ['mp4', 'mkv', 'avi', 'mov', 'webm', 'flv', 'gif']
+        self.video_convert_formats = ['mp4', 'mkv', 'avi', 'mov', 'webm', 'flv']
         # Audio formats
         self.audio_convert_formats = ['mp3', 'wav', 'aac', 'm4a', 'opus', 'vorbis', 'flac', 'ogg']
 
@@ -999,6 +978,12 @@ class MainWindowUI:
             formats = list(self.audio_convert_formats)
         else:
             formats = list(self.video_convert_formats)
+            # Only allow GIF for short videos (<= 15s)
+            duration = 0
+            if hasattr(self, 'current_metadata') and self.current_metadata:
+                duration = int(self.current_metadata.get('duration', 0) or 0)
+            if 0 < duration <= 15:
+                formats.append('gif')
 
         self.convert_format_vars = {}
         self.convert_format_checkboxes = []
@@ -1281,10 +1266,22 @@ class MainWindowUI:
     def _create_output_log(self, parent):
         """Create output log section"""
         self.output_text = ctk.CTkTextbox(parent, wrap="word")
-        self.output_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), padx=5, pady=5)
+        self.output_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), padx=5, pady=(5, 2))
         self.output_text.configure(state="disabled")
         # Add context menu (read-only mode)
         ContextMenu(self.output_text, read_only=True)
+
+        log_actions = ctk.CTkFrame(parent, fg_color="transparent")
+        log_actions.grid(row=1, column=0, sticky=(tk.W, tk.E), padx=5, pady=(2, 5))
+        log_actions.columnconfigure(0, weight=1)
+        log_actions.columnconfigure(1, weight=0)
+        log_actions.columnconfigure(2, weight=0)
+
+        self.copy_log_btn = ctk.CTkButton(log_actions, text="📋 Copy Log", command=self._copy_log)
+        self.copy_log_btn.grid(row=0, column=1, padx=(0, 5))
+
+        self.clear_log_btn = ctk.CTkButton(log_actions, text="🧹 Clear Log", command=self._clear_log)
+        self.clear_log_btn.grid(row=0, column=2)
 
     def _create_status_bar(self, parent):
         """Create status bar"""
