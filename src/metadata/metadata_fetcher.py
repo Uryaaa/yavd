@@ -19,7 +19,8 @@ class MetadataFetcher:
         yt_dlp_path: str,
         url: str,
         on_success: Callable[[Dict[str, Any]], None],
-        on_error: Callable[[str], None]
+        on_error: Callable[[str], None],
+        on_log: Optional[Callable[[str], None]] = None
     ):
         """
         Fetch video metadata in a separate thread
@@ -29,6 +30,7 @@ class MetadataFetcher:
             url: Video URL to fetch metadata for
             on_success: Callback function with metadata dict
             on_error: Callback function when fetch fails
+            on_log: Optional callback function for log messages
         """
         if self.is_fetching:
             on_error("Metadata fetch already in progress")
@@ -37,7 +39,7 @@ class MetadataFetcher:
         # Start fetch in separate thread
         thread = threading.Thread(
             target=self._fetch_thread,
-            args=(yt_dlp_path, url, on_success, on_error),
+            args=(yt_dlp_path, url, on_success, on_error, on_log),
             daemon=True
         )
         thread.start()
@@ -47,7 +49,8 @@ class MetadataFetcher:
         yt_dlp_path: str,
         url: str,
         on_success: Callable[[Dict[str, Any]], None],
-        on_error: Callable[[str], None]
+        on_error: Callable[[str], None],
+        on_log: Optional[Callable[[str], None]] = None
     ):
         """
         Execute metadata fetch in background thread
@@ -57,12 +60,13 @@ class MetadataFetcher:
             url: Video URL to fetch metadata for
             on_success: Callback function with metadata dict
             on_error: Callback function when fetch fails
+            on_log: Optional callback function for log messages
         """
         self.is_fetching = True
 
         try:
             # First, detect if this is a playlist
-            playlist_info = self._detect_playlist(yt_dlp_path, url)
+            playlist_info = self._detect_playlist(yt_dlp_path, url, on_log)
 
             if playlist_info['is_playlist']:
                 # Handle playlist
@@ -77,6 +81,9 @@ class MetadataFetcher:
                 "--skip-download",
                 url
             ]
+
+            if on_log:
+                on_log(f"Executing: {' '.join(cmd)}")
 
             # Execute command and capture output
             process = subprocess.Popen(
@@ -131,7 +138,12 @@ class MetadataFetcher:
         finally:
             self.is_fetching = False
     
-    def _detect_playlist(self, yt_dlp_path: str, url: str) -> dict:
+    def _detect_playlist(
+        self,
+        yt_dlp_path: str,
+        url: str,
+        on_log: Optional[Callable[[str], None]] = None
+    ) -> dict:
         """
         Detect if URL is a playlist and fetch playlist information
 
@@ -151,6 +163,9 @@ class MetadataFetcher:
                 "--skip-download",
                 url
             ]
+
+            if on_log:
+                on_log(f"Executing: {' '.join(cmd)}")
 
             process = subprocess.Popen(
                 cmd,
@@ -319,7 +334,7 @@ class MetadataFetcher:
         }
 
     @staticmethod
-    def format_duration(seconds: int) -> str:
+    def format_duration(seconds: Optional[int]) -> str:
         """
         Format duration in seconds to HH:MM:SS
         
@@ -329,11 +344,16 @@ class MetadataFetcher:
         Returns:
             Formatted duration string
         """
-        if seconds <= 0:
+        if seconds is None:
             return "00:00:00"
 
-        # Convert to int to handle both int and float inputs
-        seconds = int(seconds)
+        try:
+            seconds = int(seconds)
+        except (TypeError, ValueError):
+            return "00:00:00"
+
+        if seconds <= 0:
+            return "00:00:00"
 
         hours = seconds // 3600
         minutes = (seconds % 3600) // 60
@@ -342,7 +362,7 @@ class MetadataFetcher:
         return f"{hours:02d}:{minutes:02d}:{secs:02d}"
     
     @staticmethod
-    def format_number(num: int) -> str:
+    def format_number(num: Optional[int]) -> str:
         """
         Format large numbers with commas
         
@@ -352,5 +372,11 @@ class MetadataFetcher:
         Returns:
             Formatted number string
         """
-        return f"{num:,}"
+        if num is None:
+            return "0"
+
+        try:
+            return f"{int(num):,}"
+        except (TypeError, ValueError):
+            return "0"
 

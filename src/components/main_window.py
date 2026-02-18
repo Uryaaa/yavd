@@ -266,7 +266,8 @@ class MainWindow(MainWindowUI, MainWindowTools):
             yt_dlp_path=yt_dlp_path,
             url=url,
             on_success=self._on_metadata_success,
-            on_error=self._on_metadata_error
+            on_error=self._on_metadata_error,
+            on_log=self.log_message
         )
 
     def _on_metadata_success(self, metadata):
