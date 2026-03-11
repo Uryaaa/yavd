@@ -104,7 +104,7 @@ class ContextMenu:
         if menu_items is not None:
             for i in range(menu_items + 1):
                 try:
-                    item_label = self.menu.entryconfig(i, "label")[4][4]
+                    item_label = self.menu.entrycget(i, "label")
 
                     if item_label == "Cut":
                         state = "normal" if has_selection and not self.read_only else "disabled"

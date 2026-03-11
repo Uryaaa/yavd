@@ -6,6 +6,7 @@ import os
 import re
 import time
 import glob
+import base64
 from typing import Callable, Optional
 
 
@@ -17,6 +18,7 @@ class Downloader:
         self.is_downloading = False
         self.current_process = None
         self.should_cancel = False
+        self.last_downloaded_file = None
     
     def download(
         self,
@@ -27,6 +29,7 @@ class Downloader:
         quality: str,
         trim_start: Optional[str],
         trim_end: Optional[str],
+        audio_quality: Optional[str],
         on_log: Callable[[str], None],
         on_complete: Callable[[], None],
         on_error: Callable[[str], None],
@@ -38,9 +41,16 @@ class Downloader:
         convert_format: str = "",
         save_thumbnail_file: bool = False,
         save_subtitles: bool = False,
+        embed_chapters: bool = False,
         sponsorblock_enabled: bool = False,
         sponsorblock_mode: str = "mark",
-        sponsorblock_categories: Optional[list] = None
+        sponsorblock_categories: Optional[list] = None,
+        output_template: Optional[str] = None,
+        keep_original_file: bool = False,
+        write_description: bool = False,
+        skip_existing: bool = False,
+        allow_duplicates: bool = False,
+        ffmpeg_path: Optional[str] = None
     ):
         """
         Start download in a separate thread
@@ -53,6 +63,7 @@ class Downloader:
             quality: Quality selection ('best', '1080', '720', '480', '360', 'worst')
             trim_start: Start time for trimming (HH:MM:SS format) or None
             trim_end: End time for trimming (HH:MM:SS format) or None
+            audio_quality: Audio bitrate/quality value ('best', 'worst', or numeric)
             on_log: Callback function for logging messages
             on_complete: Callback function when download completes
             on_error: Callback function when download fails
@@ -64,9 +75,16 @@ class Downloader:
             convert_format: Target format for conversion
             save_thumbnail_file: Whether to save thumbnail as a file
             save_subtitles: Whether to save subtitles
+            embed_chapters: Whether to embed chapter metadata when available
             sponsorblock_enabled: Whether SponsorBlock removal is enabled
             sponsorblock_mode: SponsorBlock mode ("mark" or "remove")
             sponsorblock_categories: List of SponsorBlock categories to remove
+            output_template: Custom yt-dlp output template path
+            keep_original_file: Keep original media files after trim/remux/convert
+            write_description: Save media description to .description file
+            skip_existing: Skip download if output file already exists
+            allow_duplicates: Allow duplicate filenames with automatic (2) suffix
+            ffmpeg_path: Optional path to ffmpeg executable
         """
         if self.is_downloading and not is_playlist_item:
             on_error("A download is already in progress")
@@ -74,11 +92,12 @@ class Downloader:
 
         # Reset cancel flag
         self.should_cancel = False
+        self.last_downloaded_file = None
 
         # Start download in separate thread
         thread = threading.Thread(
             target=self._download_thread,
-            args=(yt_dlp_path, url, output_dir, format_type, quality, trim_start, trim_end, on_log, on_complete, on_error, on_download_started, on_progress, mode, convert_enabled, convert_format, save_thumbnail_file, save_subtitles, sponsorblock_enabled, sponsorblock_mode, sponsorblock_categories),
+            args=(yt_dlp_path, url, output_dir, format_type, quality, trim_start, trim_end, audio_quality, on_log, on_complete, on_error, on_download_started, on_progress, mode, convert_enabled, convert_format, save_thumbnail_file, save_subtitles, embed_chapters, sponsorblock_enabled, sponsorblock_mode, sponsorblock_categories, output_template, keep_original_file, write_description, skip_existing, allow_duplicates, ffmpeg_path),
             daemon=True
         )
         thread.start()
@@ -106,6 +125,7 @@ class Downloader:
         quality: str,
         trim_start: Optional[str],
         trim_end: Optional[str],
+        audio_quality: Optional[str],
         on_log: Callable[[str], None],
         on_complete: Callable[[], None],
         on_error: Callable[[str], None],
@@ -116,9 +136,16 @@ class Downloader:
         convert_format: str = "",
         save_thumbnail_file: bool = False,
         save_subtitles: bool = False,
+        embed_chapters: bool = False,
         sponsorblock_enabled: bool = False,
         sponsorblock_mode: str = "mark",
-        sponsorblock_categories: Optional[list] = None
+        sponsorblock_categories: Optional[list] = None,
+        output_template: Optional[str] = None,
+        keep_original_file: bool = False,
+        write_description: bool = False,
+        skip_existing: bool = False,
+        allow_duplicates: bool = False,
+        ffmpeg_path: Optional[str] = None
     ):
         """
         Execute download in background thread
@@ -131,6 +158,7 @@ class Downloader:
             quality: Quality selection ('best', '1080', '720', '480', '360', 'worst')
             trim_start: Start time for trimming (HH:MM:SS format) or None
             trim_end: End time for trimming (HH:MM:SS format) or None
+            audio_quality: Audio bitrate/quality value ('best', 'worst', or numeric)
             on_log: Callback function for logging messages
             on_complete: Callback function when download completes
             on_error: Callback function when download fails
@@ -141,9 +169,16 @@ class Downloader:
             convert_format: Target format for conversion
             save_thumbnail_file: Whether to save thumbnail as a file
             save_subtitles: Whether to save subtitles
+            embed_chapters: Whether to embed chapter metadata when available
             sponsorblock_enabled: Whether SponsorBlock removal is enabled
             sponsorblock_mode: SponsorBlock mode ("mark" or "remove")
             sponsorblock_categories: List of SponsorBlock categories to remove
+            output_template: Custom yt-dlp output template path
+            keep_original_file: Keep original media files after trim/remux/convert
+            write_description: Save media description to .description file
+            skip_existing: Skip download if output file already exists
+            allow_duplicates: Allow duplicate filenames with automatic (2) suffix
+            ffmpeg_path: Optional path to ffmpeg executable
         """
         self.is_downloading = True
         download_started = False
@@ -161,11 +196,24 @@ class Downloader:
             if audio_target == "opus" and not trim_start and not trim_end:
                 skip_thumbnail_embed = False
 
+            effective_output_template = output_template
+            if allow_duplicates:
+                unique_output = self._resolve_duplicate_output_template(
+                    yt_dlp_path=yt_dlp_path,
+                    url=url,
+                    output_template=output_template,
+                    output_dir=output_dir,
+                    on_log=on_log
+                )
+                if unique_output:
+                    effective_output_template = unique_output
+
             # Build command based on format
             cmd = self._build_command(
                 yt_dlp_path, url, output_dir, format_type, quality, trim_start, trim_end,
-                skip_thumbnail_embed, mode, convert_enabled, convert_format,
-                save_thumbnail_file, save_subtitles, sponsorblock_enabled, sponsorblock_mode, sponsorblock_categories
+                skip_thumbnail_embed, mode, convert_enabled, convert_format, audio_quality,
+                save_thumbnail_file, save_subtitles, embed_chapters, sponsorblock_enabled, sponsorblock_mode, sponsorblock_categories,
+                effective_output_template, keep_original_file, write_description, skip_existing
             )
 
             on_log(f"Executing: {' '.join(cmd)}\n")
@@ -232,14 +280,18 @@ class Downloader:
                     on_log("-" * 70)
                     on_log("Starting trim process with FFmpeg...")
 
-                    success = self._trim_with_ffmpeg(
+                    trimmed_file = self._trim_with_ffmpeg(
                         current_file,
                         trim_start,
                         trim_end,
                         on_log,
-                        output_dir
+                        output_dir,
+                        keep_original_file=keep_original_file,
+                        save_thumbnail_file=save_thumbnail_file,
+                        ffmpeg_path=ffmpeg_path
                     )
-                    if success:
+                    if trimmed_file:
+                        current_file = trimmed_file
                         on_log("✓ Trim completed successfully!")
                     else:
                         on_error("Trim failed - original file preserved")
@@ -255,7 +307,10 @@ class Downloader:
                         current_file,
                         convert_format,
                         on_log,
-                        output_dir
+                        output_dir,
+                        keep_original_file=keep_original_file,
+                        save_thumbnail_file=save_thumbnail_file,
+                        ffmpeg_path=ffmpeg_path
                     )
                     if converted_file:
                         current_file = converted_file
@@ -267,6 +322,7 @@ class Downloader:
                 if not processing_failed:
                     if not current_file:
                         on_log("⚠ Could not find downloaded file for processing")
+                    self.last_downloaded_file = current_file
                     on_complete()
             else:
                 on_log("-" * 70)
@@ -333,7 +389,7 @@ class Downloader:
         except Exception:
             return None
 
-    def _build_command(self, yt_dlp_path: str, url: str, output_dir: str, format_type: str, quality: str, trim_start: Optional[str], trim_end: Optional[str], skip_thumbnail_embed: bool = False, mode: str = "video_audio", convert_enabled: bool = False, convert_format: str = "", save_thumbnail_file: bool = False, save_subtitles: bool = False, sponsorblock_enabled: bool = False, sponsorblock_mode: str = "mark", sponsorblock_categories: Optional[list] = None) -> list:
+    def _build_command(self, yt_dlp_path: str, url: str, output_dir: str, format_type: str, quality: str, trim_start: Optional[str], trim_end: Optional[str], skip_thumbnail_embed: bool = False, mode: str = "video_audio", convert_enabled: bool = False, convert_format: str = "", audio_quality: Optional[str] = None, save_thumbnail_file: bool = False, save_subtitles: bool = False, embed_chapters: bool = False, sponsorblock_enabled: bool = False, sponsorblock_mode: str = "mark", sponsorblock_categories: Optional[list] = None, output_template: Optional[str] = None, keep_original_file: bool = False, write_description: bool = False, skip_existing: bool = False) -> list:
         """
         Build yt-dlp command based on format type and quality
 
@@ -347,11 +403,17 @@ class Downloader:
             mode: Download mode ('video', 'audio', or 'auto')
             convert_enabled: Whether to convert after download
             convert_format: Target format for conversion
+            audio_quality: Audio bitrate/quality value ('best', 'worst', or numeric)
             save_thumbnail_file: Whether to save thumbnail as a file
             save_subtitles: Whether to save subtitles
+            embed_chapters: Whether to embed chapter metadata when available
             sponsorblock_enabled: Whether SponsorBlock removal is enabled
             sponsorblock_mode: SponsorBlock mode ("mark" or "remove")
             sponsorblock_categories: List of SponsorBlock categories to remove
+            output_template: Custom output template path
+            keep_original_file: Keep intermediate files after processing
+            write_description: Write media description to file
+            skip_existing: Do not overwrite existing files
 
         Returns:
             List of command arguments
@@ -360,9 +422,10 @@ class Downloader:
         _ = trim_start
         _ = trim_end
 
-        output_template = os.path.join(output_dir, "%(title)s.%(ext)s")
+        output_template = output_template or os.path.join(output_dir, "%(title)s.%(ext)s")
         format_type_lower = format_type.lower()
         sponsorblock_categories = sponsorblock_categories or []
+        audio_quality_value = self._normalize_audio_quality(audio_quality)
 
         # Audio-only formats
         audio_formats = ['mp3', 'wav', 'aac', 'm4a', 'opus', 'vorbis', 'flac', 'ogg']
@@ -375,10 +438,12 @@ class Downloader:
                 yt_dlp_path,
                 "-x",
                 "--audio-format", audio_output_format,
-                "--audio-quality", "0",
+                "--audio-quality", audio_quality_value,
                 "--embed-metadata",
                 "--compat-options", "no-youtube-unavailable-videos",
             ]
+            if embed_chapters:
+                cmd.append("--embed-chapters")
 
             # Handle thumbnail based on trimming
             if skip_thumbnail_embed:
@@ -405,6 +470,15 @@ class Downloader:
                 flag = "--sponsorblock-remove" if sponsorblock_mode == "remove" else "--sponsorblock-mark"
                 cmd.extend([flag, ",".join(sponsorblock_categories)])
 
+            if write_description:
+                cmd.append("--write-description")
+
+            if skip_existing:
+                cmd.append("--no-overwrites")
+
+            if keep_original_file:
+                cmd.append("--keep-video")
+
             cmd.extend(["-o", output_template, url])
             return cmd
 
@@ -428,6 +502,8 @@ class Downloader:
                 "--embed-metadata",
                 "--compat-options", "no-youtube-unavailable-videos",
             ])
+            if embed_chapters:
+                cmd.append("--embed-chapters")
 
             # Handle thumbnail based on trimming (video conversions keep embedded thumbnail)
             skip_embed = skip_thumbnail_embed
@@ -447,6 +523,15 @@ class Downloader:
             if sponsorblock_enabled and sponsorblock_categories:
                 flag = "--sponsorblock-remove" if sponsorblock_mode == "remove" else "--sponsorblock-mark"
                 cmd.extend([flag, ",".join(sponsorblock_categories)])
+
+            if write_description:
+                cmd.append("--write-description")
+
+            if skip_existing:
+                cmd.append("--no-overwrites")
+
+            if keep_original_file:
+                cmd.append("--keep-video")
 
             # Note: Conversion is now handled by FFmpeg after download, not by yt-dlp
             # This provides better control and efficiency
@@ -520,6 +605,41 @@ class Downloader:
         # Wait a moment for file system to update
         time.sleep(0.5)
 
+        # Try to predict output filename from yt-dlp template
+        try:
+            yt_dlp_path = cmd[0] if cmd else ""
+            url = cmd[-1] if cmd else ""
+            template = None
+            if "-o" in cmd:
+                idx = cmd.index("-o")
+                if idx + 1 < len(cmd):
+                    template = cmd[idx + 1]
+            if yt_dlp_path and url and template:
+                probe_cmd = [
+                    yt_dlp_path,
+                    "--get-filename",
+                    "--no-playlist",
+                    "-o", template,
+                    url
+                ]
+                process = subprocess.Popen(
+                    probe_cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    encoding='utf-8',
+                    errors='replace',
+                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+                )
+                stdout, _ = process.communicate(timeout=20)
+                if process.returncode == 0:
+                    predicted_lines = (stdout or "").strip().splitlines()
+                    if predicted_lines:
+                        predicted_path = predicted_lines[-1].strip()
+                        if predicted_path and os.path.exists(predicted_path):
+                            return predicted_path
+        except Exception:
+            pass
+
         # Look for all common media files
         patterns = [
             os.path.join(output_dir, "*.mp4"),
@@ -585,7 +705,108 @@ class Downloader:
         except Exception as e:
             return None
 
-    def _embed_thumbnail(self, input_file: str, thumbnail_file: str, on_log) -> bool:
+    def _get_unique_filepath(self, file_path: str) -> str:
+        """
+        Build a unique path using suffix format: "name (2).ext".
+
+        Args:
+            file_path: Desired file path
+
+        Returns:
+            Non-existing file path
+        """
+        if not os.path.exists(file_path):
+            return file_path
+
+        base, ext = os.path.splitext(file_path)
+        match = re.match(r'^(.*)\s\((\d+)\)$', base)
+        if match:
+            root = match.group(1)
+            start_num = int(match.group(2)) + 1
+        else:
+            root = base
+            start_num = 2
+
+        candidate_num = start_num
+        while True:
+            candidate = f"{root} ({candidate_num}){ext}"
+            if not os.path.exists(candidate):
+                return candidate
+            candidate_num += 1
+
+    def _resolve_duplicate_output_template(
+        self,
+        yt_dlp_path: str,
+        url: str,
+        output_template: Optional[str],
+        output_dir: str,
+        on_log: Callable[[str], None]
+    ) -> Optional[str]:
+        """
+        Resolve output path for duplicate mode by precomputing filename and applying (2) suffix if needed.
+
+        Args:
+            yt_dlp_path: Path to yt-dlp executable
+            url: Media URL
+            output_template: Current output template
+            output_dir: Output directory
+            on_log: Logging callback
+
+        Returns:
+            Unique output path template (fixed path) or None if resolution fails
+        """
+        try:
+            template = output_template or os.path.join(output_dir, "%(title)s.%(ext)s")
+            probe_cmd = [
+                yt_dlp_path,
+                "--get-filename",
+                "--no-playlist",
+                "-o", template,
+                url
+            ]
+
+            process = subprocess.Popen(
+                probe_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                encoding='utf-8',
+                errors='replace',
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+            )
+            stdout, _ = process.communicate(timeout=30)
+
+            if process.returncode != 0:
+                return None
+
+            predicted_path = (stdout or "").strip().splitlines()
+            if not predicted_path:
+                return None
+
+            predicted = predicted_path[-1].strip()
+            if not predicted:
+                return None
+
+            unique_path = self._get_unique_filepath(predicted)
+            return unique_path
+
+        except Exception:
+            return None
+
+    @staticmethod
+    def _normalize_audio_quality(value: Optional[str]) -> str:
+        """Normalize audio quality/bitrate value for yt-dlp --audio-quality."""
+        if value is None:
+            return "0"
+        text = str(value).strip().lower()
+        if not text or text in ("best", "auto"):
+            return "0"
+        if text in ("worst", "low"):
+            return "9"
+        if text.endswith("k"):
+            text = text[:-1]
+        return text
+
+    def _embed_thumbnail(self, input_file: str, thumbnail_file: str, on_log, ffmpeg_path: Optional[str] = None) -> bool:
         """
         Embed thumbnail into audio file
 
@@ -606,11 +827,17 @@ class Downloader:
             ext_lower = ext.lower()
             output_file = f"{base}_with_thumb{ext}"
 
+            # Use mutagen for container-native artwork in formats where ffmpeg attached_pic is unreliable.
+            if ext_lower in ['.flac', '.opus', '.ogg']:
+                return self._embed_thumbnail_with_mutagen(input_file, thumbnail_file, on_log)
+
             # Determine appropriate codec and settings based on audio format
+            ffmpeg_cmd = ffmpeg_path or "ffmpeg"
+
             if ext_lower in ['.mp3', '.aac', '.m4a']:
                 # For MP3/AAC/M4A, use mjpeg codec for thumbnail
                 cmd = [
-                    "ffmpeg", "-y",
+                    ffmpeg_cmd, "-y",
                     "-i", input_file,
                     "-i", thumbnail_file,
                     "-c", "copy",
@@ -620,23 +847,6 @@ class Downloader:
                     "-disposition:v", "attached_pic",
                     output_file
                 ]
-            elif ext_lower in ['.flac']:
-                # For FLAC, preserve original audio codec, copy thumbnail
-                cmd = [
-                    "ffmpeg", "-y",
-                    "-i", input_file,
-                    "-i", thumbnail_file,
-                    "-map", "0:a",
-                    "-map", "1:v",
-                    "-c:a", "copy",
-                    "-c:v", "copy",
-                    "-disposition:v", "attached_pic",
-                    output_file
-                ]
-            elif ext_lower in ['.ogg', '.opus']:
-                # Let yt-dlp handle opus/ogg embedding; skip manual embed
-                on_log(f"Skipping manual thumbnail embed for {ext_lower} (handled by yt-dlp)")
-                return True
             elif ext_lower in ['.wav']:
                 # For WAV, we need to convert thumbnail to appropriate format
                 # WAV doesn't support embedded thumbnails in standard way, so we'll skip
@@ -645,7 +855,7 @@ class Downloader:
             else:
                 # Default command for other formats
                 cmd = [
-                    "ffmpeg", "-y",
+                    ffmpeg_cmd, "-y",
                     "-i", input_file,
                     "-i", thumbnail_file,
                     "-map", "0",
@@ -693,14 +903,170 @@ class Downloader:
             on_log(f"⚠ Thumbnail embedding error: {str(e)}")
             return False
 
+    def _embed_thumbnail_video(self, input_file: str, thumbnail_file: str, on_log, ffmpeg_path: Optional[str] = None) -> bool:
+        """
+        Embed thumbnail into a video container as an attached picture stream.
+
+        Args:
+            input_file: Path to video file
+            thumbnail_file: Path to thumbnail image
+            on_log: Logging callback
+            ffmpeg_path: Optional path to ffmpeg executable
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            if not os.path.exists(thumbnail_file):
+                on_log("⚠ Thumbnail file not found, skipping embedding")
+                return True
+
+            base, ext = os.path.splitext(input_file)
+            output_file = f"{base}_with_thumb{ext}"
+            ffmpeg_cmd = ffmpeg_path or "ffmpeg"
+
+            # Attach thumbnail without re-encoding the main video stream
+            cmd = [
+                ffmpeg_cmd, "-y",
+                "-i", input_file,
+                "-i", thumbnail_file,
+                "-map", "0",
+                "-map", "1",
+                "-c", "copy",
+                "-c:v:1", "mjpeg",
+                "-disposition:v:1", "attached_pic",
+                output_file
+            ]
+
+            on_log("Embedding thumbnail into video...")
+
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                encoding='utf-8',
+                errors='replace',
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+            )
+
+            for line in process.stderr:
+                line = line.rstrip()
+                if line and ("frame=" in line or "Stream mapping:" in line):
+                    on_log(line)
+
+            process.wait()
+
+            if process.returncode == 0:
+                if os.path.exists(input_file):
+                    os.remove(input_file)
+                os.rename(output_file, input_file)
+                on_log("✓ Thumbnail embedded successfully (video)")
+                return True
+
+            on_log(f"⚠ Failed to embed thumbnail (code: {process.returncode})")
+            if os.path.exists(output_file):
+                os.remove(output_file)
+            return False
+
+        except Exception as e:
+            on_log(f"⚠ Thumbnail embedding error: {str(e)}")
+            return False
+
+    def _embed_thumbnail_with_mutagen(self, input_file: str, thumbnail_file: str, on_log) -> bool:
+        """
+        Embed artwork using mutagen metadata blocks (works for FLAC/OPUS/OGG).
+
+        Args:
+            input_file: Path to target audio file
+            thumbnail_file: Path to image file
+            on_log: Logging callback
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            from mutagen.flac import FLAC, Picture
+            from mutagen.oggopus import OggOpus
+            from mutagen.oggvorbis import OggVorbis
+        except Exception:
+            on_log("⚠ mutagen is not available in this Python environment")
+            return False
+
+        try:
+            _, ext = os.path.splitext(input_file)
+            ext_lower = ext.lower()
+            with open(thumbnail_file, "rb") as f:
+                image_data = f.read()
+
+            thumb_ext = os.path.splitext(thumbnail_file)[1].lower()
+            if thumb_ext in ['.jpg', '.jpeg']:
+                mime = "image/jpeg"
+            elif thumb_ext == '.png':
+                mime = "image/png"
+            elif thumb_ext == '.webp':
+                mime = "image/webp"
+            else:
+                mime = "image/jpeg"
+
+            picture = Picture()
+            picture.data = image_data
+            picture.type = 3  # Front cover
+            picture.mime = mime
+            picture.desc = "Cover"
+
+            if ext_lower == '.flac':
+                audio = FLAC(input_file)
+                try:
+                    audio.clear_pictures()
+                except Exception:
+                    pass
+                audio.add_picture(picture)
+                audio.save()
+                on_log("✓ Thumbnail embedded successfully (mutagen/flac)")
+                return True
+
+            if ext_lower == '.opus':
+                audio = OggOpus(input_file)
+                pic_b64 = base64.b64encode(picture.write()).decode("ascii")
+                try:
+                    del audio["metadata_block_picture"]
+                except Exception:
+                    pass
+                audio["metadata_block_picture"] = [pic_b64]
+                audio.save()
+                on_log("✓ Thumbnail embedded successfully (mutagen/opus)")
+                return True
+
+            if ext_lower == '.ogg':
+                audio = OggVorbis(input_file)
+                pic_b64 = base64.b64encode(picture.write()).decode("ascii")
+                try:
+                    del audio["metadata_block_picture"]
+                except Exception:
+                    pass
+                audio["metadata_block_picture"] = [pic_b64]
+                audio.save()
+                on_log("✓ Thumbnail embedded successfully (mutagen/ogg)")
+                return True
+
+            on_log(f"⚠ Unsupported format for mutagen embedding: {ext_lower}")
+            return False
+
+        except Exception as e:
+            on_log(f"⚠ mutagen embed failed: {str(e)}")
+            return False
+
     def _trim_with_ffmpeg(
         self,
         input_file: str,
         start_time: Optional[str],
         end_time: Optional[str],
         on_log: Callable[[str], None],
-        output_dir: Optional[str] = None
-    ) -> bool:
+        output_dir: Optional[str] = None,
+        keep_original_file: bool = False,
+        save_thumbnail_file: bool = False,
+        ffmpeg_path: Optional[str] = None
+    ) -> Optional[str]:
         """
         Trim video/audio file using FFmpeg, preserving thumbnails for audio files
 
@@ -710,9 +1076,11 @@ class Downloader:
             end_time: End time (HH:MM:SS) or None
             on_log: Logging callback
             output_dir: Output directory (used to find thumbnail file)
+            save_thumbnail_file: Whether to keep thumbnail file after embedding
+            ffmpeg_path: Optional path to ffmpeg executable
 
         Returns:
-            True if successful, False otherwise
+            Path to processed file if successful, None otherwise
         """
         try:
             # Check if this is an audio file (needs thumbnail embedding)
@@ -720,12 +1088,12 @@ class Downloader:
             ext_lower = ext.lower()
             
             # Define which formats support embedded thumbnails
-            audio_formats_with_thumbnails = ['.mp3', '.aac', '.m4a', '.flac']
+            audio_formats_with_thumbnails = ['.mp3', '.aac', '.m4a', '.flac', '.opus', '.ogg']
             is_audio_with_thumbnail_support = ext_lower in audio_formats_with_thumbnails
 
             # Find thumbnail file downloaded by yt-dlp (if trimming was enabled)
             thumbnail_file = None
-            if is_audio_with_thumbnail_support and output_dir:
+            if output_dir:
                 thumbnail_file = self._find_thumbnail_file(input_file, output_dir)
                 if thumbnail_file:
                     on_log(f"Found thumbnail: {os.path.basename(thumbnail_file)}")
@@ -734,7 +1102,8 @@ class Downloader:
             output_file = f"{base}_trimmed{ext}"
 
             # Build FFmpeg command for trimming
-            cmd = ["ffmpeg", "-y", "-i", input_file]
+            ffmpeg_cmd = ffmpeg_path or "ffmpeg"
+            cmd = [ffmpeg_cmd, "-y", "-i", input_file]
 
             # Add start time if specified (after input for accurate seeking)
             if start_time and start_time != "00:00:00":
@@ -784,54 +1153,65 @@ class Downloader:
             process.wait()
 
             if process.returncode == 0:
-                # Replace original file with trimmed version
-                os.remove(input_file)
-                os.rename(output_file, input_file)
-                on_log(f"✓ File trimmed: {os.path.basename(input_file)}")
+                # Replace original or keep side-by-side based on option
+                if keep_original_file:
+                    processed_file = output_file
+                    on_log(f"✓ File trimmed: {os.path.basename(processed_file)}")
+                else:
+                    os.remove(input_file)
+                    os.rename(output_file, input_file)
+                    processed_file = input_file
+                    on_log(f"✓ File trimmed: {os.path.basename(processed_file)}")
 
-                # Re-embed thumbnail for audio files that support it
-                if is_audio_with_thumbnail_support and thumbnail_file:
-                    success = self._embed_thumbnail(input_file, thumbnail_file, on_log)
+                # Re-embed thumbnail if present
+                if thumbnail_file:
+                    if is_audio_with_thumbnail_support:
+                        success = self._embed_thumbnail(processed_file, thumbnail_file, on_log, ffmpeg_path=ffmpeg_path)
+                    else:
+                        success = self._embed_thumbnail_video(processed_file, thumbnail_file, on_log, ffmpeg_path=ffmpeg_path)
                     if not success:
                         on_log("⚠ Could not embed thumbnail, but file was trimmed successfully")
-                    
-                    # Clean up thumbnail file
-                    try:
-                        if os.path.exists(thumbnail_file):
-                            os.remove(thumbnail_file)
-                    except Exception as e:
-                        on_log(f"⚠ Could not clean up thumbnail file: {str(e)}")
-                elif is_audio_with_thumbnail_support and not thumbnail_file:
+
+                    if not save_thumbnail_file:
+                        try:
+                            if os.path.exists(thumbnail_file):
+                                os.remove(thumbnail_file)
+                        except Exception as e:
+                            on_log(f"⚠ Could not clean up thumbnail file: {str(e)}")
+                elif is_audio_with_thumbnail_support:
                     on_log("⚠ No thumbnail found to embed")
 
-                return True
+                return processed_file
             else:
                 on_log(f"✗ FFmpeg failed with code: {process.returncode}")
                 # Clean up failed output file if it exists
                 if os.path.exists(output_file):
                     os.remove(output_file)
                 # Clean up thumbnail file if extraction was done
-                if thumbnail_file and os.path.exists(thumbnail_file):
+                if thumbnail_file and os.path.exists(thumbnail_file) and not save_thumbnail_file:
                     try:
                         os.remove(thumbnail_file)
                     except Exception as e:
                         on_log(f"⚠ Could not clean up thumbnail file: {str(e)}")
-                return False
+                return None
 
         except FileNotFoundError:
             on_log("✗ FFmpeg not found. Please install FFmpeg and add it to PATH")
             on_log("  Download from: https://ffmpeg.org/download.html")
-            return False
+            return None
         except Exception as e:
             on_log(f"✗ Trim error: {str(e)}")
-            return False
+            return None
 
     def _convert_with_ffmpeg(
         self,
         input_file: str,
         target_format: str,
         on_log: Callable[[str], None],
-        output_dir: Optional[str] = None
+        output_dir: Optional[str] = None,
+        keep_original_file: bool = False,
+        save_thumbnail_file: bool = False,
+        ffmpeg_path: Optional[str] = None
     ) -> Optional[str]:
         """
         Convert video/audio file to target format using FFmpeg
@@ -841,6 +1221,8 @@ class Downloader:
             target_format: Target format (e.g., 'mp4', 'mkv', 'mp3', etc.)
             on_log: Logging callback
             output_dir: Output directory (used to find thumbnail file)
+            save_thumbnail_file: Whether to keep thumbnail file after embedding
+            ffmpeg_path: Optional path to ffmpeg executable
 
         Returns:
             Path to converted file if successful, None otherwise
@@ -850,9 +1232,26 @@ class Downloader:
             ext_lower = ext.lower().lstrip('.')
             target_format_lower = target_format.lower()
 
+            # Find thumbnail file if available
+            thumbnail_file = None
+            if output_dir:
+                thumbnail_file = self._find_thumbnail_file(input_file, output_dir)
+                if thumbnail_file:
+                    on_log(f"Found thumbnail: {os.path.basename(thumbnail_file)}")
+
             # Skip conversion if already in target format
             if ext_lower == target_format_lower:
                 on_log(f"File already in {target_format} format, skipping conversion")
+                audio_formats_with_thumbnails = ['mp3', 'aac', 'm4a', 'flac', 'opus', 'ogg']
+                if target_format_lower in audio_formats_with_thumbnails and thumbnail_file:
+                    success = self._embed_thumbnail(input_file, thumbnail_file, on_log, ffmpeg_path=ffmpeg_path)
+                    if not success:
+                        on_log("⚠ Could not embed thumbnail, but file was not converted")
+                if thumbnail_file and os.path.exists(thumbnail_file) and not save_thumbnail_file:
+                    try:
+                        os.remove(thumbnail_file)
+                    except Exception as e:
+                        on_log(f"⚠ Could not clean up thumbnail file: {str(e)}")
                 return input_file
 
             # Define format categories
@@ -863,18 +1262,12 @@ class Downloader:
             is_audio_target = target_format_lower in audio_formats
             is_video_target = target_format_lower in video_formats
 
-            # Find thumbnail file if available
-            thumbnail_file = None
-            if output_dir:
-                thumbnail_file = self._find_thumbnail_file(input_file, output_dir)
-                if thumbnail_file:
-                    on_log(f"Found thumbnail: {os.path.basename(thumbnail_file)}")
-
             # Create output filename
             output_file = f"{base}.{target_format_lower}"
 
             # Build FFmpeg command based on target format
-            cmd = ["ffmpeg", "-y", "-i", input_file]
+            ffmpeg_cmd = ffmpeg_path or "ffmpeg"
+            cmd = [ffmpeg_cmd, "-y", "-i", input_file]
 
             if is_gif_target:
                 palette_file = f"{base}_palette.png"
@@ -884,7 +1277,7 @@ class Downloader:
                 gif_scale = "480:-1:flags=lanczos"
 
                 palette_cmd = [
-                    "ffmpeg", "-y",
+                    ffmpeg_cmd, "-y",
                     "-i", input_file,
                     "-vf", f"fps={gif_fps},scale={gif_scale},palettegen=stats_mode=diff",
                     palette_file
@@ -916,7 +1309,7 @@ class Downloader:
                     return None
 
                 gif_cmd = [
-                    "ffmpeg", "-y",
+                    ffmpeg_cmd, "-y",
                     "-i", input_file,
                     "-i", palette_file,
                     "-lavfi", f"fps={gif_fps},scale={gif_scale}[x];[x][1:v]paletteuse",
@@ -958,14 +1351,15 @@ class Downloader:
 
                 on_log(f"✓ Converted to {target_format_lower}: {os.path.basename(output_file)}")
 
-                # Remove original file
-                try:
-                    os.remove(input_file)
-                except Exception as e:
-                    on_log(f"⚠ Could not remove original file: {str(e)}")
+                # Remove original file unless user wants to keep it
+                if not keep_original_file:
+                    try:
+                        os.remove(input_file)
+                    except Exception as e:
+                        on_log(f"⚠ Could not remove original file: {str(e)}")
 
                 # Clean up thumbnail file if present
-                if thumbnail_file and os.path.exists(thumbnail_file):
+                if thumbnail_file and os.path.exists(thumbnail_file) and not save_thumbnail_file:
                     try:
                         os.remove(thumbnail_file)
                     except Exception as e:
@@ -1040,21 +1434,22 @@ class Downloader:
             if process.returncode == 0:
                 on_log(f"✓ Converted to {target_format_lower}: {os.path.basename(output_file)}")
 
-                # Remove original file
-                try:
-                    os.remove(input_file)
-                except Exception as e:
-                    on_log(f"⚠ Could not remove original file: {str(e)}")
+                # Remove original file unless user wants to keep it
+                if not keep_original_file:
+                    try:
+                        os.remove(input_file)
+                    except Exception as e:
+                        on_log(f"⚠ Could not remove original file: {str(e)}")
 
-                # Embed thumbnail for audio formats that support it (let yt-dlp handle opus/ogg)
-                audio_formats_with_thumbnails = ['mp3', 'aac', 'm4a', 'flac']
+                # Embed thumbnail for audio formats that support artwork metadata blocks
+                audio_formats_with_thumbnails = ['mp3', 'aac', 'm4a', 'flac', 'opus', 'ogg']
                 if target_format_lower in audio_formats_with_thumbnails and thumbnail_file:
-                    success = self._embed_thumbnail(output_file, thumbnail_file, on_log)
+                    success = self._embed_thumbnail(output_file, thumbnail_file, on_log, ffmpeg_path=ffmpeg_path)
                     if not success:
                         on_log("⚠ Could not embed thumbnail, but conversion was successful")
 
                 # Clean up thumbnail file
-                if thumbnail_file and os.path.exists(thumbnail_file):
+                if thumbnail_file and os.path.exists(thumbnail_file) and not save_thumbnail_file:
                     try:
                         os.remove(thumbnail_file)
                     except Exception as e:

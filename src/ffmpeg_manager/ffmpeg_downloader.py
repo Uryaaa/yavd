@@ -23,6 +23,7 @@ class FFmpegDownloader:
     def download(
         self,
         output_path: str,
+        build_variant: str,
         on_progress: Callable[[dict], None],
         on_log: Callable[[str], None],
         on_complete: Callable[[str], None],
@@ -33,6 +34,7 @@ class FFmpegDownloader:
 
         Args:
             output_path: Path where to save the executable
+            build_variant: Build variant ("gpl", "lgpl", or "shared")
             on_progress: Callback for progress dict with keys: 'downloaded', 'total', 'speed', 'eta_seconds'
             on_log: Callback for logging messages
             on_complete: Callback when download completes with file path
@@ -45,7 +47,7 @@ class FFmpegDownloader:
         # Start download in separate thread
         thread = threading.Thread(
             target=self._download_thread,
-            args=(output_path, on_progress, on_log, on_complete, on_error),
+            args=(output_path, build_variant, on_progress, on_log, on_complete, on_error),
             daemon=True
         )
         thread.start()
@@ -53,6 +55,7 @@ class FFmpegDownloader:
     def _download_thread(
         self,
         output_path: str,
+        build_variant: str,
         on_progress: Callable[[int, int], None],
         on_log: Callable[[str], None],
         on_complete: Callable[[str], None],
@@ -64,7 +67,7 @@ class FFmpegDownloader:
         try:
             # Get download URL
             on_log("Fetching latest FFmpeg release information...")
-            download_url = self._get_download_url(on_log)
+            download_url = self._get_download_url(build_variant, on_log)
             
             if not download_url:
                 on_error("Failed to get download URL for FFmpeg")
@@ -137,11 +140,12 @@ class FFmpegDownloader:
         finally:
             self.is_downloading = False
     
-    def _get_download_url(self, on_log: Callable[[str], None]) -> Optional[str]:
+    def _get_download_url(self, build_variant: str, on_log: Callable[[str], None]) -> Optional[str]:
         """
         Get download URL for latest FFmpeg release
 
         Args:
+            build_variant: Build variant ("gpl", "lgpl", or "shared")
             on_log: Logging callback
 
         Returns:
@@ -157,6 +161,11 @@ class FFmpegDownloader:
             with urllib.request.urlopen(req, timeout=10) as response:
                 data = json.loads(response.read().decode('utf-8'))
 
+            # Normalize build variant
+            variant = (build_variant or "gpl").strip().lower()
+            if variant not in ("gpl", "lgpl", "shared"):
+                variant = "gpl"
+
             # Find the latest release with Windows build
             for release in data:
                 if release.get('prerelease'):
@@ -165,12 +174,23 @@ class FFmpegDownloader:
                 assets = release.get('assets', [])
                 for asset in assets:
                     name = asset.get('name', '').lower()
-                    # Look for Windows 64-bit GPL build (most common, includes ffmpeg.exe)
-                    # Prefer non-shared versions as they're more portable
-                    if 'win64' in name and 'gpl' in name and not 'shared' in name and name.endswith('.zip'):
+                    # Look for Windows 64-bit build matching requested variant
+                    if 'win64' not in name or not name.endswith('.zip'):
+                        continue
+                    if variant == "shared":
+                        # Accept shared builds (GPL or LGPL)
+                        if 'shared' not in name:
+                            continue
+                    elif variant == "gpl":
+                        if 'gpl' not in name or 'shared' in name:
+                            continue
+                    else:  # lgpl
+                        if 'lgpl' not in name or 'shared' in name:
+                            continue
+
                         download_url = asset.get('browser_download_url')
                         version = release.get('tag_name', 'unknown')
-                        on_log(f"Found version: {version}")
+                        on_log(f"Found version: {version} ({variant})")
                         return download_url
 
             on_log("⚠ Could not find FFmpeg Windows build in release assets")

@@ -160,8 +160,15 @@ class MainWindowTools:
             self.ffmpeg_progress_label.configure(text="✓ Download completed!")
             self.status_var.set("FFmpeg downloaded successfully")
 
+            # Persist ffmpeg path for later use
+            if hasattr(self, "config"):
+                self.config.set('ffmpeg_path', file_path)
+
             # Hide progress bar after 2 seconds
             self.root.after(2000, self.ffmpeg_progress_frame.grid_remove)
+
+            if hasattr(self, "_refresh_tool_status"):
+                self._refresh_tool_status()
 
             messagebox.showinfo("Success", f"FFmpeg downloaded successfully!\n\nSaved to:\n{file_path}")
 

@@ -7,6 +7,7 @@ from pathlib import Path
 
 from .context_menu import ContextMenu
 from .main_window_time_entry import TimeEntry
+from .tooltip import ToolTip
 
 
 class MainWindowUI:
@@ -100,6 +101,82 @@ class MainWindowUI:
             delay,
             lambda: self._layout_option_buttons(frame, widgets, min_col_width)
         )
+
+    def _add_tooltip(self, widget, text: str):
+        """Attach a tooltip and keep a reference alive."""
+        if not widget or not text:
+            return
+        if not hasattr(self, "_tooltips"):
+            self._tooltips = []
+        self._tooltips.append(ToolTip(widget, text))
+
+    def _setup_tooltips(self):
+        """Attach tooltips to key controls."""
+        if hasattr(self, "yt_dlp_browse_btn"):
+            self._add_tooltip(self.yt_dlp_browse_btn, "Select your yt-dlp executable.")
+        if hasattr(self, "refresh_tools_btn"):
+            self._add_tooltip(self.refresh_tools_btn, "Refresh yt-dlp and FFmpeg availability status.")
+        if hasattr(self, "update_ytdlp_btn"):
+            self._add_tooltip(self.update_ytdlp_btn, "Run yt-dlp self-update (-U).")
+        if hasattr(self, "list_sites_btn"):
+            self._add_tooltip(self.list_sites_btn, "List all supported extractors/sites from yt-dlp.")
+
+        if hasattr(self, "paste_btn"):
+            self._add_tooltip(self.paste_btn, "Paste URL from clipboard. Auto-fetch runs when enabled.")
+        if hasattr(self, "fetch_btn"):
+            self._add_tooltip(self.fetch_btn, "Fetch metadata, formats, and quality options.")
+        if hasattr(self, "recent_url_combo"):
+            self._add_tooltip(self.recent_url_combo, "Pick a recently used media link.")
+        if hasattr(self, "recent_use_btn"):
+            self._add_tooltip(self.recent_use_btn, "Use the selected recent entry in URL field.")
+        if hasattr(self, "recent_clear_btn"):
+            self._add_tooltip(self.recent_clear_btn, "Clear all recent links.")
+
+        preset_tips = {
+            "best_mp4": "Video+audio, MP4, best quality.",
+            "audio_mp3": "Audio-only preset with MP3 target.",
+            "audio_opus": "Audio-only preset with Opus target.",
+            "small_mp4": "Video+audio preset tuned for smaller size.",
+        }
+        if hasattr(self, "preset_button_map"):
+            for key, btn in self.preset_button_map.items():
+                self._add_tooltip(btn, preset_tips.get(key, "Apply quick preset."))
+
+        if hasattr(self, "quick_preset_clear_btn"):
+            self._add_tooltip(self.quick_preset_clear_btn, "Clear active quick preset and unlock options.")
+        if hasattr(self, "template_mode_clear_btn"):
+            self._add_tooltip(self.template_mode_clear_btn, "Clear active template mode.")
+
+        if hasattr(self, "queue_add_btn"):
+            self._add_tooltip(self.queue_add_btn, "Add current URL to queue.")
+        if hasattr(self, "queue_download_all_btn"):
+            self._add_tooltip(self.queue_download_all_btn, "Start downloading all queued URLs in order.")
+        if hasattr(self, "queue_clear_btn"):
+            self._add_tooltip(self.queue_clear_btn, "Clear all queued URLs.")
+
+        if hasattr(self, "output_browse_btn"):
+            self._add_tooltip(self.output_browse_btn, "Choose the destination folder for downloads.")
+        if hasattr(self, "after_download_combo"):
+            self._add_tooltip(self.after_download_combo, "Action to run after successful download.")
+        if hasattr(self, "trim_enable_checkbox"):
+            self._add_tooltip(self.trim_enable_checkbox, "Cut media by start/end time before final output.")
+
+        if hasattr(self, "filename_style_combo"):
+            self._add_tooltip(self.filename_style_combo, "Choose output filename pattern style.")
+        if hasattr(self, "save_thumbnail_checkbox"):
+            self._add_tooltip(self.save_thumbnail_checkbox, "Save media thumbnail as separate image file.")
+        if hasattr(self, "save_subtitles_checkbox"):
+            self._add_tooltip(self.save_subtitles_checkbox, "Download subtitles when available.")
+        if hasattr(self, "embed_chapters_checkbox"):
+            self._add_tooltip(self.embed_chapters_checkbox, "Embed chapter markers into media when available.")
+        if hasattr(self, "keep_original_checkbox"):
+            self._add_tooltip(self.keep_original_checkbox, "Keep original file after trim/remux/convert.")
+        if hasattr(self, "write_description_checkbox"):
+            self._add_tooltip(self.write_description_checkbox, "Write media description to a text file.")
+        if hasattr(self, "skip_existing_checkbox"):
+            self._add_tooltip(self.skip_existing_checkbox, "Do not overwrite any existing output files.")
+        if hasattr(self, "allow_duplicates_checkbox"):
+            self._add_tooltip(self.allow_duplicates_checkbox, "Allow duplicates using automatic suffix like (2).")
     def _configure_styles(self):
         """Configure custom styles for the application"""
         # Configure colors (for reference, though customtkinter handles most styling)
@@ -115,6 +192,8 @@ class MainWindowUI:
 
     def create_widgets(self):
         """Create and layout all GUI widgets"""
+        self._tooltips = []
+
         # Main container with minimal padding
         main_frame = ctk.CTkFrame(self.root)
         main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), padx=5, pady=5)
@@ -195,6 +274,7 @@ class MainWindowUI:
 
         # Status Bar (always visible at bottom)
         self._create_status_bar(main_frame)
+        self._setup_tooltips()
 
     def _create_download_tab_content(self):
         """Create content for download tab"""
@@ -204,9 +284,6 @@ class MainWindowUI:
         # Video Metadata Section
         self._create_metadata_section(self.download_scrollable)
 
-        # Trim/Cut Section
-        self._create_trim_section(self.download_scrollable)
-
         # Output Directory Section
         self._create_output_section(self.download_scrollable)
 
@@ -215,6 +292,9 @@ class MainWindowUI:
 
         # Convert To Section (after Download Options)
         self._create_convert_section(self.download_scrollable)
+
+        # Trim/Cut Section (right above Other Options)
+        self._create_trim_section(self.download_scrollable)
 
         # Other Options Section
         self._create_other_options_section(self.download_scrollable)
@@ -767,6 +847,29 @@ class MainWindowUI:
         self.yt_dlp_browse_btn = ctk.CTkButton(path_frame, text="📁 Browse...", command=self.browse_yt_dlp)
         self.yt_dlp_browse_btn.grid(row=0, column=1, sticky=tk.W)
 
+        tools_row = ctk.CTkFrame(path_frame, fg_color="transparent")
+        tools_row.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(6, 0))
+        tools_row.columnconfigure(0, weight=1)
+        tools_row.columnconfigure(1, weight=1)
+        tools_row.columnconfigure(2, weight=0)
+        tools_row.columnconfigure(3, weight=0)
+        tools_row.columnconfigure(4, weight=0)
+
+        self.ytdlp_status_label = ctk.CTkLabel(tools_row, text="yt-dlp: Unknown", anchor=tk.W)
+        self.ytdlp_status_label.grid(row=0, column=0, sticky=(tk.W, tk.E), padx=(0, 8))
+
+        self.ffmpeg_status_label = ctk.CTkLabel(tools_row, text="FFmpeg: Unknown", anchor=tk.W)
+        self.ffmpeg_status_label.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=(0, 8))
+
+        self.refresh_tools_btn = ctk.CTkButton(tools_row, text="🔄 Refresh", width=92, command=self._refresh_tool_status)
+        self.refresh_tools_btn.grid(row=0, column=2, sticky=tk.E, padx=(0, 5))
+
+        self.update_ytdlp_btn = ctk.CTkButton(tools_row, text="⬆️ Update yt-dlp", width=130, command=self._update_ytdlp_binary)
+        self.update_ytdlp_btn.grid(row=0, column=3, sticky=tk.E)
+
+        self.list_sites_btn = ctk.CTkButton(tools_row, text="🌐 Sites", width=96, command=self._list_supported_sites)
+        self.list_sites_btn.grid(row=0, column=4, sticky=tk.E, padx=(5, 0))
+
     def _create_url_section(self, parent):
         """Create video URL input section"""
         ctk.CTkLabel(parent, text="🔗 Video URL:", font=('Arial', 12, 'bold')).grid(
@@ -781,8 +884,8 @@ class MainWindowUI:
         # Add context menu (no auto-fetch)
         ContextMenu(self.url_entry)
 
-        paste_btn = ctk.CTkButton(url_frame, text="📋 Paste", command=self.paste_url)
-        paste_btn.grid(row=0, column=1, padx=(0, 3))
+        self.paste_btn = ctk.CTkButton(url_frame, text="📋 Paste", command=self.paste_url)
+        self.paste_btn.grid(row=0, column=1, padx=(0, 3))
 
         fetch_btn = ctk.CTkButton(url_frame, text="▶️ Go", command=self.fetch_video_info)
         fetch_btn.grid(row=0, column=2)
@@ -790,6 +893,136 @@ class MainWindowUI:
         # Store buttons for later reference
         self.fetch_btn = fetch_btn
         self.playlist_btn = None
+
+        # Recent URLs row
+        recent_frame = ctk.CTkFrame(url_frame, fg_color="transparent")
+        recent_frame.grid(row=1, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(5, 0))
+        recent_frame.columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(recent_frame, text="Recent:", font=('Arial', 10, 'bold')).grid(
+            row=0, column=0, sticky=tk.W, padx=(0, 6)
+        )
+        self.recent_url_var = tk.StringVar(value="")
+        self.recent_url_combo = ctk.CTkComboBox(
+            recent_frame,
+            values=[],
+            variable=self.recent_url_var,
+            command=self._on_recent_url_selected
+        )
+        self.recent_url_combo.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=(0, 3))
+        self.recent_use_btn = ctk.CTkButton(
+            recent_frame,
+            text="Use",
+            width=62,
+            command=lambda: self._on_recent_url_selected(self.recent_url_combo.get())
+        )
+        self.recent_use_btn.grid(row=0, column=2, sticky=tk.E)
+        self.recent_clear_btn = ctk.CTkButton(
+            recent_frame,
+            text="Clear",
+            width=62,
+            command=self._clear_recent_urls
+        )
+        self.recent_clear_btn.grid(row=0, column=3, sticky=tk.E, padx=(3, 0))
+
+        # Preset chips row
+        presets_frame = ctk.CTkFrame(url_frame, fg_color="transparent")
+        presets_frame.grid(row=2, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(5, 0))
+        presets_frame.columnconfigure(0, weight=0)
+        presets_frame.columnconfigure(1, weight=1)
+        ctk.CTkLabel(presets_frame, text="Quick presets:", font=('Arial', 10, 'bold')).grid(
+            row=0, column=0, sticky=tk.W, padx=(0, 6)
+        )
+
+        self.preset_buttons_frame = ctk.CTkFrame(presets_frame, fg_color="transparent")
+        self.preset_buttons_frame.grid(row=0, column=1, sticky=(tk.W, tk.E))
+        self.preset_buttons = []
+        self.preset_button_map = {}
+        preset_defs = [
+            ("Best MP4", "best_mp4"),
+            ("Audio MP3", "audio_mp3"),
+            ("Audio Opus", "audio_opus"),
+            ("Small MP4", "small_mp4"),
+        ]
+        for label, preset_key in preset_defs:
+            btn = ctk.CTkButton(
+                self.preset_buttons_frame,
+                text=label,
+                command=lambda key=preset_key: self._apply_quick_preset(key),
+                width=106
+            )
+            self.preset_buttons.append(btn)
+            self.preset_button_map[preset_key] = btn
+        self._schedule_option_layout(self.preset_buttons_frame, self.preset_buttons, min_col_width=110)
+        self.preset_buttons_frame.bind(
+            "<Configure>",
+            lambda e: self._schedule_option_layout(self.preset_buttons_frame, self.preset_buttons, min_col_width=110)
+        )
+
+        self.quick_preset_mode_frame = ctk.CTkFrame(url_frame)
+        self.quick_preset_mode_frame.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(5, 0))
+        self.quick_preset_mode_frame.columnconfigure(0, weight=1)
+        self.quick_preset_mode_frame.columnconfigure(1, weight=0)
+
+        self.quick_preset_mode_label = ctk.CTkLabel(
+            self.quick_preset_mode_frame,
+            text="Preset active.",
+            font=('Arial', 10)
+        )
+        self.quick_preset_mode_label.grid(row=0, column=0, sticky=tk.W, padx=8, pady=4)
+
+        self.quick_preset_clear_btn = ctk.CTkButton(
+            self.quick_preset_mode_frame,
+            text="Clear Preset",
+            width=110,
+            command=self._clear_quick_preset
+        )
+        self.quick_preset_clear_btn.grid(row=0, column=1, sticky=tk.E, padx=8, pady=4)
+
+        self.quick_preset_mode_frame.grid_remove()
+
+        self.template_mode_frame = ctk.CTkFrame(url_frame)
+        self.template_mode_frame.grid(row=4, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(5, 0))
+        self.template_mode_frame.columnconfigure(0, weight=1)
+        self.template_mode_frame.columnconfigure(1, weight=0)
+
+        self.template_mode_label = ctk.CTkLabel(
+            self.template_mode_frame,
+            text="Template active.",
+            font=('Arial', 10)
+        )
+        self.template_mode_label.grid(row=0, column=0, sticky=tk.W, padx=8, pady=4)
+
+        self.template_mode_clear_btn = ctk.CTkButton(
+            self.template_mode_frame,
+            text="Clear Template",
+            width=110,
+            command=self._clear_template_mode
+        )
+        self.template_mode_clear_btn.grid(row=0, column=1, sticky=tk.E, padx=8, pady=4)
+
+        self.template_mode_frame.grid_remove()
+
+        # Queue row
+        queue_controls = ctk.CTkFrame(url_frame, fg_color="transparent")
+        queue_controls.grid(row=5, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(5, 0))
+        queue_controls.columnconfigure(3, weight=1)
+
+        self.queue_add_btn = ctk.CTkButton(queue_controls, text="➕ Add Queue", width=110, command=self._add_current_url_to_queue)
+        self.queue_add_btn.grid(row=0, column=0, sticky=tk.W, padx=(0, 3))
+
+        self.queue_download_all_btn = ctk.CTkButton(queue_controls, text="▶️ Download All", width=130, command=self._start_queue_download)
+        self.queue_download_all_btn.grid(row=0, column=1, sticky=tk.W, padx=(0, 3))
+
+        self.queue_clear_btn = ctk.CTkButton(queue_controls, text="🗑️ Clear", width=78, command=self._clear_url_queue)
+        self.queue_clear_btn.grid(row=0, column=2, sticky=tk.W, padx=(0, 6))
+
+        self.queue_status_label = ctk.CTkLabel(queue_controls, text="Queue: 0", anchor=tk.W)
+        self.queue_status_label.grid(row=0, column=3, sticky=(tk.W, tk.E))
+
+        self.queue_preview_text = ctk.CTkTextbox(url_frame, height=55, wrap="word")
+        self.queue_preview_text.grid(row=6, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(4, 0))
+        self.queue_preview_text.configure(state="disabled")
 
         # Instruction label
         instruction_label = ctk.CTkLabel(
@@ -872,18 +1105,18 @@ class MainWindowUI:
         """Create trim/cut controls section"""
         # Trim frame (initially hidden) - fixed size, don't expand
         self.trim_frame = ctk.CTkFrame(parent)
-        self.trim_frame.grid(row=3, column=0, sticky=tk.W, pady=(0, 5))
+        self.trim_frame.grid(row=8, column=0, sticky=tk.W, pady=(0, 5))
 
         ctk.CTkLabel(self.trim_frame, text="✂️ Trim Video", font=('Arial', 13, 'bold')).grid(
             row=0, column=0, sticky=tk.W, pady=(5, 5), padx=5)
 
         # Enable trim checkbox
         self.trim_enabled = tk.BooleanVar(value=False)
-        ctk.CTkCheckBox(self.trim_frame, text="Enable trimming",
-                       variable=self.trim_enabled,
-                       command=self._toggle_trim_controls,
-                       checkbox_width=22, checkbox_height=22).grid(
-            row=1, column=0, sticky=tk.W, pady=(0, 5), padx=5)
+        self.trim_enable_checkbox = ctk.CTkCheckBox(self.trim_frame, text="Enable trimming",
+                                                    variable=self.trim_enabled,
+                                                    command=self._toggle_trim_controls,
+                                                    checkbox_width=22, checkbox_height=22)
+        self.trim_enable_checkbox.grid(row=1, column=0, sticky=tk.W, pady=(0, 5), padx=5)
 
         # Time inputs frame (Start and End on same line) - fixed size
         time_frame = ctk.CTkFrame(self.trim_frame)
@@ -961,6 +1194,8 @@ class MainWindowUI:
         else:
             for child in self.convert_format_frame.winfo_children():
                 child.configure(state='disabled')
+        if hasattr(self, "_update_filename_preview"):
+            self._update_filename_preview()
 
     def _update_convert_format_options(self):
         """Update convert format options based on current mode"""
@@ -992,6 +1227,8 @@ class MainWindowUI:
             for key, var in self.convert_format_vars.items():
                 var.set(key == fmt)
             self.convert_format_var.set(fmt)
+            if hasattr(self, "_update_filename_preview"):
+                self._update_filename_preview()
 
         # Create checkbox buttons (exclusive selection)
         for fmt in formats:
@@ -1040,44 +1277,129 @@ class MainWindowUI:
         # Add context menu
         ContextMenu(self.output_entry)
 
-        browse_btn = ctk.CTkButton(output_frame, text="📁 Browse...", command=self.browse_output)
-        browse_btn.grid(row=0, column=1)
+        self.output_browse_btn = ctk.CTkButton(output_frame, text="📁 Browse...", command=self.browse_output)
+        self.output_browse_btn.grid(row=0, column=1)
+
+        action_row = ctk.CTkFrame(output_frame, fg_color="transparent")
+        action_row.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(5, 0))
+        action_row.columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(action_row, text="After download:", font=('Arial', 10, 'bold')).grid(
+            row=0, column=0, sticky=tk.W, padx=(0, 6)
+        )
+        self.after_download_var = tk.StringVar(value="Do nothing")
+        self.after_download_combo = ctk.CTkComboBox(
+            action_row,
+            values=["Do nothing", "Open folder", "Copy file path"],
+            variable=self.after_download_var,
+            command=self._on_after_download_action_changed
+        )
+        self.after_download_combo.grid(row=0, column=1, sticky=(tk.W, tk.E))
+
+        self.filename_preview_var = tk.StringVar(value="Preview: (no metadata yet)")
+        self.filename_preview_label = ctk.CTkLabel(
+            output_frame,
+            textvariable=self.filename_preview_var,
+            font=('Arial', 10),
+            text_color='gray',
+            anchor=tk.W
+        )
+        self.filename_preview_label.grid(row=2, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(4, 0))
 
     def _create_other_options_section(self, parent):
         """Create other options section."""
         self.other_options_frame = ctk.CTkFrame(parent)
-        self.other_options_frame.grid(row=8, column=0, sticky=(tk.W, tk.E), pady=(0, 8))
+        self.other_options_frame.grid(row=9, column=0, sticky=(tk.W, tk.E), pady=(0, 8))
         self.other_options_frame.columnconfigure(0, weight=1)
 
         ctk.CTkLabel(self.other_options_frame, text="⚙️ Other Options", font=('Arial', 13, 'bold')).grid(
             row=0, column=0, sticky=tk.W, pady=(5, 5), padx=5)
 
-        options_frame = ctk.CTkFrame(self.other_options_frame, fg_color="transparent")
+        options_frame = ctk.CTkFrame(self.other_options_frame)
         options_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), padx=5, pady=(0, 5))
+        options_frame.columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(options_frame, text="Filename style:", font=('Arial', 10, 'bold')).grid(
+            row=0, column=0, sticky=tk.W, padx=(5, 8), pady=(5, 3)
+        )
+        self.filename_style_var = tk.StringVar(value="classic")
+        self.filename_style_combo = ctk.CTkComboBox(
+            options_frame,
+            values=["classic", "basic", "pretty", "nerdy"],
+            variable=self.filename_style_var,
+            width=120,
+            command=self._on_filename_style_changed
+        )
+        self.filename_style_combo.grid(row=0, column=1, sticky=tk.W, pady=(5, 3))
+
+        checkbox_frame = ctk.CTkFrame(options_frame, fg_color="transparent")
+        checkbox_frame.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E), padx=5, pady=(0, 5))
 
         self.save_thumbnail_var = tk.BooleanVar(value=False)
         self.save_subtitles_var = tk.BooleanVar(value=False)
+        self.embed_chapters_var = tk.BooleanVar(value=False)
+        self.keep_original_var = tk.BooleanVar(value=False)
+        self.write_description_var = tk.BooleanVar(value=False)
+        self.skip_existing_var = tk.BooleanVar(value=False)
+        self.allow_duplicates_var = tk.BooleanVar(value=False)
 
         self.other_option_checkboxes = [
             ctk.CTkCheckBox(
-                options_frame,
+                checkbox_frame,
                 text="Save thumbnail as a file",
                 variable=self.save_thumbnail_var,
                 checkbox_width=22, checkbox_height=22
             ),
             ctk.CTkCheckBox(
-                options_frame,
+                checkbox_frame,
                 text="Save subtitles",
                 variable=self.save_subtitles_var,
                 checkbox_width=22, checkbox_height=22
             ),
+            ctk.CTkCheckBox(
+                checkbox_frame,
+                text="Embed chapters",
+                variable=self.embed_chapters_var,
+                checkbox_width=22, checkbox_height=22
+            ),
+            ctk.CTkCheckBox(
+                checkbox_frame,
+                text="Keep original file after trim/remux",
+                variable=self.keep_original_var,
+                checkbox_width=22, checkbox_height=22
+            ),
+            ctk.CTkCheckBox(
+                checkbox_frame,
+                text="Write description file",
+                variable=self.write_description_var,
+                checkbox_width=22, checkbox_height=22
+            ),
+            ctk.CTkCheckBox(
+                checkbox_frame,
+                text="Skip existing files",
+                variable=self.skip_existing_var,
+                checkbox_width=22, checkbox_height=22
+            ),
+            ctk.CTkCheckBox(
+                checkbox_frame,
+                text="Allow duplicate files (name (2))",
+                variable=self.allow_duplicates_var,
+                command=self._toggle_duplicate_mode,
+                checkbox_width=22, checkbox_height=22
+            ),
         ]
+        self.save_thumbnail_checkbox = self.other_option_checkboxes[0]
         self.save_subtitles_checkbox = self.other_option_checkboxes[1]
+        self.embed_chapters_checkbox = self.other_option_checkboxes[2]
+        self.keep_original_checkbox = self.other_option_checkboxes[3]
+        self.write_description_checkbox = self.other_option_checkboxes[4]
+        self.skip_existing_checkbox = self.other_option_checkboxes[5]
+        self.allow_duplicates_checkbox = self.other_option_checkboxes[6]
 
-        self._schedule_option_layout(options_frame, self.other_option_checkboxes, min_col_width=220)
-        options_frame.bind(
+        self._schedule_option_layout(checkbox_frame, self.other_option_checkboxes, min_col_width=240)
+        checkbox_frame.bind(
             "<Configure>",
-            lambda e: self._schedule_option_layout(options_frame, self.other_option_checkboxes, min_col_width=220)
+            lambda e: self._schedule_option_layout(checkbox_frame, self.other_option_checkboxes, min_col_width=240)
         )
 
         self.other_options_frame.grid_remove()
@@ -1089,34 +1411,12 @@ class MainWindowUI:
         self.format_label_frame.grid(row=6, column=0, sticky=(tk.W, tk.E), pady=(0, 8))
         self.format_label_frame.columnconfigure(0, weight=1)
 
-        # Template mode banner (hidden until a template is active)
-        self.template_mode_frame = ctk.CTkFrame(self.format_label_frame)
-        self.template_mode_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(5, 6), padx=5)
-        self.template_mode_frame.columnconfigure(0, weight=1)
-        self.template_mode_frame.columnconfigure(1, weight=0)
-
-        self.template_mode_label = ctk.CTkLabel(
-            self.template_mode_frame,
-            text="Template active.",
-            font=('Arial', 11)
-        )
-        self.template_mode_label.grid(row=0, column=0, sticky=tk.W, padx=8, pady=6)
-
-        self.template_mode_clear_btn = ctk.CTkButton(
-            self.template_mode_frame,
-            text="Clear Template",
-            command=self._clear_template_mode
-        )
-        self.template_mode_clear_btn.grid(row=0, column=1, sticky=tk.E, padx=8, pady=6)
-
-        self.template_mode_frame.grid_remove()
-
         ctk.CTkLabel(self.format_label_frame, text="🎬 Download Options", font=('Arial', 13, 'bold')).grid(
-            row=1, column=0, sticky=tk.W, pady=(0, 5), padx=5)
+            row=0, column=0, sticky=tk.W, pady=(0, 5), padx=5)
 
         # Mode selection (Video+Audio, Video Only, Audio Only)
         self.mode_frame = ctk.CTkFrame(self.format_label_frame)
-        self.mode_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(0, 5), padx=5)
+        self.mode_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 5), padx=5)
         self.mode_frame.columnconfigure(1, weight=1)
 
         ctk.CTkLabel(self.mode_frame, text="Mode:", font=('Arial', 11, 'bold')).grid(
@@ -1169,7 +1469,7 @@ class MainWindowUI:
 
         # Format selection
         self.format_frame = ctk.CTkFrame(self.format_label_frame)
-        self.format_frame.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=(0, 5), padx=5)
+        self.format_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(0, 5), padx=5)
         self.format_frame.columnconfigure(1, weight=1)
 
         ctk.CTkLabel(self.format_frame, text="Format:", font=('Arial', 11, 'bold')).grid(
@@ -1187,7 +1487,7 @@ class MainWindowUI:
     def _create_quality_section(self, parent):
         """Create quality selection section"""
         self.quality_label_frame = ctk.CTkFrame(parent)
-        self.quality_label_frame.grid(row=9, column=0, sticky=(tk.W, tk.E), pady=(0, 8))
+        self.quality_label_frame.grid(row=10, column=0, sticky=(tk.W, tk.E), pady=(0, 8))
         self.quality_label_frame.columnconfigure(0, weight=1)
 
         ctk.CTkLabel(self.quality_label_frame, text="⭐ Quality & Resolution", font=('Arial', 13, 'bold')).grid(
@@ -1231,7 +1531,7 @@ class MainWindowUI:
         """Create download button and progress bar"""
         # Button frame for Download and Cancel buttons
         button_frame = ctk.CTkFrame(parent, fg_color="transparent")
-        button_frame.grid(row=10, column=0, pady=(0, 5), sticky=(tk.W, tk.E))
+        button_frame.grid(row=11, column=0, pady=(0, 5), sticky=(tk.W, tk.E))
         button_frame.columnconfigure(0, weight=1)
         button_frame.columnconfigure(1, weight=0)
 
@@ -1248,7 +1548,7 @@ class MainWindowUI:
 
         # Progress bar frame (below buttons, hidden initially)
         self.download_progress_frame = ctk.CTkFrame(parent)
-        self.download_progress_frame.grid(row=11, column=0, sticky=(tk.W, tk.E), pady=(5, 8))
+        self.download_progress_frame.grid(row=12, column=0, sticky=(tk.W, tk.E), pady=(5, 8))
         self.download_progress_frame.columnconfigure(0, weight=1)
 
         self.download_progress_label = ctk.CTkLabel(self.download_progress_frame, text="",

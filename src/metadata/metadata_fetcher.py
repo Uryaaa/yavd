@@ -106,10 +106,12 @@ class MetadataFetcher:
 
                 # Extract relevant information
                 video_info = {
+                    'id': metadata.get('id', ''),
                     'title': metadata.get('title', 'Unknown'),
                     'duration': metadata.get('duration', 0),
                     'uploader': metadata.get('uploader', 'Unknown'),
                     'upload_date': metadata.get('upload_date', ''),
+                    'extractor': metadata.get('extractor_key', metadata.get('extractor', '')),
                     'view_count': metadata.get('view_count', 0),
                     'thumbnail': metadata.get('thumbnail', ''),
                     'description': metadata.get('description', ''),
@@ -193,6 +195,20 @@ class MetadataFetcher:
                     # Use a set to track seen IDs and prevent duplicates
                     seen_ids = set()
                     videos = []
+
+                    def build_entry_url(entry_dict: dict) -> str:
+                        """Normalize playlist entry URL for later downloads."""
+                        raw = (entry_dict.get('url') or entry_dict.get('webpage_url') or '').strip()
+                        if raw.startswith("http://") or raw.startswith("https://"):
+                            return raw
+                        ie_key = (entry_dict.get('ie_key') or entry_dict.get('extractor_key') or '').strip()
+                        if raw and ie_key:
+                            return f"{ie_key}:{raw}"
+                        vid = (entry_dict.get('id') or '').strip()
+                        if vid and ie_key:
+                            return f"{ie_key}:{vid}"
+                        return raw or vid
+
                     for line in lines:
                         try:
                             entry = json.loads(line)
@@ -213,7 +229,7 @@ class MetadataFetcher:
                             videos.append({
                                 'id': video_id,
                                 'title': entry.get('title', 'Unknown'),
-                                'url': entry.get('url', ''),
+                                'url': build_entry_url(entry),
                                 'duration': entry.get('duration', 0),
                                 'thumbnail': entry.get('thumbnails', [{}])[0].get('url', '') if entry.get('thumbnails') else '',
                             })
